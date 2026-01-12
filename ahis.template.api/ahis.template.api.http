@@ -1,6 +1,7 @@
-@ahis.template.api_HostAddress = http://localhost:5004
+@ahis.template.api_HostAddress = https://localhost:7270
 
-GET {{ahis.template.api_HostAddress}}/weatherforecast/
-Accept: application/json
+
+
+GET {{ahis.template.api_HostAddress}}/api/country/GetAll
 
 ###

@@ -1,14 +1,19 @@
 ﻿using ahis.template.application.Features.CountryFeatures.Command;
 using ahis.template.application.Features.CountryFeatures.Query;
+using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
-using Microsoft.AspNetCore.Http;
+using ahis.template.domain.Models.ViewModels.CountryVM;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace ahis.template.api.Controllers.v1
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class CountryController : ControllerBase
+    [Authorize]
+    [EnableRateLimiting("ApiPolicy")]
+    public class CountryController : BaseApiController
     {
         private readonly IMediator _mediator;
 
@@ -17,16 +22,48 @@ namespace ahis.template.api.Controllers.v1
             _mediator = mediator;
         }
 
-        [HttpGet("GetAll")]
-        public async Task<IActionResult> GetAll([FromQuery] GetAllCountryQuery query)
+
+        /// <summary>
+        /// Get all countries
+        /// </summary>
+        /// <remarks>
+        /// This endpoint returns a list of all active countries.
+        /// </remarks>
+        /// <param name="CountryFullname">Filter only active countries</param>
+        /// <response code="200">Successfully retrieved the list of countries</response>
+        /// <response code="500">Unexpected internal server error</response>
+        /// <returns>This is a return messsage</returns>
+        [HttpGet("get-all")]
+        [ProducesResponseType(typeof(ResponseDto<List<CountryVM>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        [Produces("application/json")]
+        public async Task<IActionResult> GetAll()
         {
-            return Ok(await _mediator.Send(query));
+            var query = new GetAllCountryQuery { };
+            return Response(await _mediator.Send(query));
+
         }
 
-        [HttpPost("Add")]
+
+        /// <summary>
+        /// Add country
+        /// </summary>
+        /// <remarks>
+        /// This endpoint handle add country
+        /// </remarks>
+        /// <param name="CountryFullname">The country's fullname</param>
+        /// <response code="200">Successfully added the country</response>
+        /// <response code="500">Unexpected internal server error</response>
+        /// <returns>This is a return messsage</returns>
+        [HttpPost("add")]
+        [ProducesResponseType(typeof(ResponseDto<AddCountryCommand>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        [Produces("application/json")]
         public async Task<IActionResult> AddCountry([FromBody] AddCountryCommand command)
         {
-            return Ok(await _mediator.Send(command));
+            return Response(await _mediator.Send(command));
         }
     }
 }

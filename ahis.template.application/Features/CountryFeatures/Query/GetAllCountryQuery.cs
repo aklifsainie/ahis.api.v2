@@ -1,22 +1,23 @@
 ﻿using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
-using ahis.template.domain.Interfaces.Repositories;
+using ahis.template.application.Interfaces.Repositories;
 using ahis.template.domain.Models.Entities;
-using ahis.template.domain.Models.ViewModels;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using FluentResults;
+using ahis.template.domain.Models.ViewModels.CountryVM;
 
 namespace ahis.template.application.Features.CountryFeatures.Query
 {
-    public class GetAllCountryQuery : IRequest<ApiResponse<List<CountryVM>>>
+    public class GetAllCountryQuery : IRequest<Result<List<CountryVM>>>
     {
     }
 
-    public class GetAllCountryQueryHandler : IRequestHandler<GetAllCountryQuery, ApiResponse<List<CountryVM>>>
+    public class GetAllCountryQueryHandler : IRequestHandler<GetAllCountryQuery, Result<List<CountryVM>>>
     {
         private readonly ICountryRepository _countryRepository;
         private readonly ILogger<GetAllCountryQueryHandler> _logger;
@@ -27,53 +28,39 @@ namespace ahis.template.application.Features.CountryFeatures.Query
             _logger = logger;
         }
 
-        public async Task<ApiResponse<List<CountryVM>>> Handle(GetAllCountryQuery query, CancellationToken cancellationToken)
+        public async Task<Result<List<CountryVM>>> Handle(GetAllCountryQuery query, CancellationToken cancellationToken)
         {
-            try
+
+            _logger.LogInformation("Handling GetAllCountryQueryHandler");
+
+            // Get data from repository
+            var categoryEntity = await _countryRepository.GetAllAsync();
+
+            // If no data found
+            if (categoryEntity == null || !categoryEntity.Any())
             {
-                _logger.LogInformation("Handling GetAllCountryQueryHandler");
+                _logger.LogWarning("No countries found.");
 
-                // Get data from repository then populate into Category entity
-                List<Country> categoryEntity = await _countryRepository.GetAllAsync();
+                // Return success with empty list but informative message
+                return Result.Ok(new List<CountryVM>()).WithSuccess("No country data found.");
+            }
 
-                // If no data found
-                if (categoryEntity == null || !categoryEntity.Any())
+            // Manual map entity to view model
+            List<CountryVM> categoryVM = categoryEntity
+                .Select(c => new CountryVM
                 {
-                    _logger.LogWarning("No countries found.");
-                    return ApiResponse<List<CountryVM>>.SuccessResponse(new List<CountryVM>(), "No country data found.");
-                }
+                    CountryFullname = c.CountryFullname,
+                    CountryShortname = c.CountryShortname,
+                    CountryDescription = c.CountryDescription,
+                    CountryCode2 = c.CountryCode2,
+                    CountryCode3 = c.CountryCode3
+                })
+                .ToList();
 
-                // Manual map entity to view model
-                List<CountryVM> categoryVM = categoryEntity
-                    .Select(c => new CountryVM
-                    {
-                        CountryFullname = c.CountryFullname,
-                        CountryShortname = c.CountryShortname,
-                        CountryDescription = c.CountryDescription,
-                        CountryCode2 = c.CountryCode2,
-                        CountryCode3 = c.CountryCode3
-                    })
-                    .ToList();
+            _logger.LogInformation("Successfully retrieved {Count} countries", categoryVM.Count);
 
-                _logger.LogInformation("Successfully retrieved {Count} countries", categoryVM.Count);
+            return Result.Ok(categoryVM);
 
-                return ApiResponse<List<CountryVM>>.SuccessResponse(categoryVM, "List of all countries obtained");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error occurred while handling GetAllCountryQueryHandler");
-
-
-                // Return error response with details
-                return ApiResponse<List<CountryVM>>.ErrorResponse(
-                    message: "Failed to get country list.",
-                    errors: new
-                    {
-                        ExceptionMessage = ex.Message,
-                        InnerException = ex.InnerException?.Message,
-                        StackTrace = ex.StackTrace
-                    });
-            }
 
         }
     }

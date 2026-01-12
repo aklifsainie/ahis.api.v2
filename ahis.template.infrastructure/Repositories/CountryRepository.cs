@@ -1,4 +1,4 @@
-﻿using ahis.template.domain.Interfaces.Repositories;
+﻿using ahis.template.application.Interfaces.Repositories;
 using ahis.template.domain.Models.Entities;
 using ahis.template.infrastructure.Contexts;
 using System;

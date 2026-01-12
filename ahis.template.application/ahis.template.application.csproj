@@ -7,16 +7,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Interfaces\" />
-  </ItemGroup>
-
-  <ItemGroup>
+    <PackageReference Include="FluentResults" Version="4.0.0" />
+    <PackageReference Include="FluentValidation" Version="11.3.0" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.3.0" />
+    <PackageReference Include="MailKit" Version="4.14.1" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.7" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ahis.template.domain\ahis.template.domain.csproj" />
+    <ProjectReference Include="..\ahis.template.identity\ahis.template.identity.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Features\AccountFeatures\Queries\" />
   </ItemGroup>
 
 </Project>
