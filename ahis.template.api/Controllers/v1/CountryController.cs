@@ -1,4 +1,5 @@
-﻿using ahis.template.application.Features.CountryFeatures.Command;
+﻿using ahis.template.api.ApiClientAuthentication;
+using ahis.template.application.Features.CountryFeatures.Command;
 using ahis.template.application.Features.CountryFeatures.Query;
 using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
@@ -9,9 +10,9 @@ using Microsoft.AspNetCore.RateLimiting;
 
 namespace ahis.template.api.Controllers.v1
 {
-    [Route("api/[controller]")]
+    [Route("api/v1/country")]
     [ApiController]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = "Bearer," + ApiKeyAuthenticationDefault.AuthenticationScheme)]
     [EnableRateLimiting("ApiPolicy")]
     public class CountryController : BaseApiController
     {
@@ -33,15 +34,17 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="200">Successfully retrieved the list of countries</response>
         /// <response code="500">Unexpected internal server error</response>
         /// <returns>This is a return messsage</returns>
-        [HttpGet("get-all")]
+        [HttpGet]
         [ProducesResponseType(typeof(ResponseDto<List<CountryVM>>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [Produces("application/json")]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
         {
-            var query = new GetAllCountryQuery { };
-            return Response(await _mediator.Send(query));
+            var query = new GetAllCountryQuery();
+            return ToActionResult(await _mediator.Send(query, cancellationToken));
 
         }
 
@@ -56,14 +59,17 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="200">Successfully added the country</response>
         /// <response code="500">Unexpected internal server error</response>
         /// <returns>This is a return messsage</returns>
-        [HttpPost("add")]
-        [ProducesResponseType(typeof(ResponseDto<AddCountryCommand>), StatusCodes.Status200OK)]
+        [HttpPost]
+        [ProducesResponseType(typeof(ResponseDto<CountryVM>), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         [Produces("application/json")]
-        public async Task<IActionResult> AddCountry([FromBody] AddCountryCommand command)
+        public async Task<IActionResult> AddCountry([FromBody] AddCountryCommand command, CancellationToken cancellationToken)
         {
-            return Response(await _mediator.Send(command));
+            return ToActionResult(await _mediator.Send(command, cancellationToken));
         }
     }
 }

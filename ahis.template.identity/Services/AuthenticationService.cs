@@ -124,6 +124,10 @@ namespace ahis.template.identity.Services
                 await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
 
+                var isEmailConfirmed = await _userManager.IsEmailConfirmedAsync(user);
+                var hasPassword = await _userManager.HasPasswordAsync(user);
+                var isTwoFactorEnabled = await _userManager.GetTwoFactorEnabledAsync(user);
+
                 var response = new AuthenticationResponseVM
                 {
                     AccessToken = accessToken,
@@ -131,7 +135,9 @@ namespace ahis.template.identity.Services
                     RefreshToken = refreshToken,
                     RefreshTokenExpiresAt = refreshExpiresAt,
                     UserId = user.Id.ToString(),
-                    RequiresTwoFactor = false
+                    RequiresTwoFactor = isTwoFactorEnabled,
+                    IsPasswordCreated = hasPassword,
+                    IsEmailConfirmed = isEmailConfirmed
                 };
 
                 return Result.Ok(response);
@@ -438,31 +444,46 @@ namespace ahis.template.identity.Services
         {
             var claims = new List<Claim>
             {
-                new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-                new Claim(JwtRegisteredClaimNames.UniqueName, user.UserName ?? ""),
-                new Claim(JwtRegisteredClaimNames.Email, user.Email ?? "")
+                // REQUIRED for ASP.NET Identity & Authorize()
+                new Claim(ClaimTypes.NameIdentifier, user.Id),
+
+                // Optional
+                new Claim(ClaimTypes.Name, user.UserName ?? string.Empty),
+                new Claim(ClaimTypes.Email, user.Email ?? string.Empty),
+
+                // JWT standard claims
+                new Claim(JwtRegisteredClaimNames.Sub, user.Id),
+                new Claim(JwtRegisteredClaimNames.UniqueName, user.UserName ?? string.Empty),
+                new Claim(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
 
+            // Add custom user claims,if any
             var userClaims = await _userManager.GetClaimsAsync(user);
             claims.AddRange(userClaims);
 
+            // ADD ROLES
             var roles = await _userManager.GetRolesAsync(user);
             foreach (var role in roles)
+            {
                 claims.Add(new Claim(ClaimTypes.Role, role));
+            }
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:SigningKey"] ?? throw new InvalidOperationException("Jwt:SigningKey not configured")));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
             var expiry = DateTime.UtcNow.AddSeconds(int.Parse(_configuration["Jwt:AccessTokenExpirySeconds"] ?? "3600"));
 
             var token = new JwtSecurityToken(
-                issuer: _configuration["Jwt:Issuer"] ?? "",
-                audience: _configuration["Jwt:Audience"] ?? "",
+                issuer: _configuration["Jwt:Issuer"],
+                audience: _configuration["Jwt:Audience"],
                 claims: claims,
                 expires: expiry,
-                signingCredentials: creds);
+                signingCredentials: creds
+            );
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
+
 
         private (string token, DateTime expiresAt) GenerateRefreshToken()
         {

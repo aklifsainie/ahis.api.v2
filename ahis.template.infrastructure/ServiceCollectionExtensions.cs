@@ -1,6 +1,13 @@
-﻿using ahis.template.application.Shared.Mediator;
-using ahis.template.application.Interfaces.Repositories;
+﻿using ahis.template.application.Interfaces.Repositories;
+using ahis.template.application.Interfaces.Services;
+using ahis.template.application.Interfaces.Validators;
+using ahis.template.application.Shared.Mediator;
+using ahis.template.domain.SharedKernel;
+using ahis.template.infrastructure.ApiClientAuthentication;
 using ahis.template.infrastructure.Repositories;
+using ahis.template.infrastructure.Services;
+using ahis.template.infrastructure.SharedKernel;
+using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Generic;
@@ -8,9 +15,6 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
-using FluentValidation;
-using ahis.template.domain.SharedKernel;
-using ahis.template.infrastructure.SharedKernel;
 
 namespace ahis.template.infrastructure
 {
@@ -18,6 +22,11 @@ namespace ahis.template.infrastructure
     {
         public static IServiceCollection AddInfrastructure(this IServiceCollection services)
         {
+
+            // Api Key Related
+            services.AddScoped<IApiKeyValidator, ApiKeyValidator>();
+            services.AddScoped<IApiClientService, ApiClientService>();
+
             // Register UnitOfWork (fully-qualified to avoid namespace/type name collision)
             services.AddScoped<IUnitOfWork, UnitOfWork>();
 

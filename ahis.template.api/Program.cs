@@ -1,3 +1,4 @@
+using ahis.template.api.ApiClientAuthentication;
 using ahis.template.api.Filters;
 using ahis.template.application.Interfaces.Services;
 using ahis.template.application.Services;
@@ -47,7 +48,54 @@ namespace ahis.template.api
             ConfigureAuthentication(builder.Services, builder.Configuration, connectionString);
             ConfigureRateLimiting(builder.Services, builder.Configuration);
 
-            builder.Services.AddAuthorization();
+            builder.Services.AddAuthorization(options =>
+            {
+                options.AddPolicy(
+                    ApiKeyAuthenticationDefault.AuthorizationPolicy,
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(
+                            ApiKeyAuthenticationDefault
+                                .AuthenticationScheme);
+
+                        policy.RequireAuthenticatedUser();
+
+                        policy.RequireClaim(
+                            ApiKeyClaimType.AuthenticationType,
+                            "api_key");
+                    });
+
+                options.AddPolicy(
+                    "CountryReadPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(
+                            ApiKeyAuthenticationDefault
+                                .AuthenticationScheme);
+
+                        policy.RequireAuthenticatedUser();
+
+                        policy.RequireClaim(
+                            ApiKeyClaimType.Permission,
+                            "country.read");
+                    });
+
+                options.AddPolicy(
+                    "CountryWritePolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(
+                            ApiKeyAuthenticationDefault
+                                .AuthenticationScheme);
+
+                        policy.RequireAuthenticatedUser();
+
+                        policy.RequireClaim(
+                            ApiKeyClaimType.Permission,
+                            "country.write");
+                    });
+
+            });
 
             var app = builder.Build();
 
@@ -131,6 +179,26 @@ namespace ahis.template.api
                                 Type = ReferenceType.SecurityScheme,
                                 Id = "Bearer"
                             }
+                        },
+                        Array.Empty<string>()
+                    }
+                });
+
+                // --- API Key ---
+                options.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
+                {
+                    Name = "X-Api-Key", // <-- must match the header your ApiKeyAuthenticationHandler reads from
+                    Type = SecuritySchemeType.ApiKey,
+                    In = ParameterLocation.Header,
+                    Description = "Enter your raw API key (no prefix)."
+                });
+
+                options.AddSecurityRequirement(new OpenApiSecurityRequirement
+                {
+                    {
+                        new OpenApiSecurityScheme
+                        {
+                            Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "ApiKey" }
                         },
                         Array.Empty<string>()
                     }
@@ -235,7 +303,9 @@ namespace ahis.template.api
                         }
                     }
                 };
-            }).AddIdentityCookies();
+            })
+            .AddScheme<ApiKeyAuthenticationOption, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationDefault.AuthenticationScheme, _ => { })
+            .AddIdentityCookies();
 
             var authSettings = configuration.GetSection("Authentication");
            

@@ -13,5 +13,7 @@ namespace ahis.template.domain.Models.Entities
         public string CountryCode2 { get; set; }
         [Required]
         public string CountryCode3 { get; set; }
+        [Required]
+        public string CountryIsoCode { get; set; }
     }
 }

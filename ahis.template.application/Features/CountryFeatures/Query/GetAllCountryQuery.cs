@@ -34,32 +34,30 @@ namespace ahis.template.application.Features.CountryFeatures.Query
             _logger.LogInformation("Handling GetAllCountryQueryHandler");
 
             // Get data from repository
-            var categoryEntity = await _countryRepository.GetAllAsync();
-
-            // If no data found
-            if (categoryEntity == null || !categoryEntity.Any())
-            {
-                _logger.LogWarning("No countries found.");
-
-                // Return success with empty list but informative message
-                return Result.Ok(new List<CountryVM>()).WithSuccess("No country data found.");
-            }
+            var countryEntity = await _countryRepository.GetAllAsync(true, cancellationToken);
 
             // Manual map entity to view model
-            List<CountryVM> categoryVM = categoryEntity
+            var countries = countryEntity
                 .Select(c => new CountryVM
                 {
                     CountryFullname = c.CountryFullname,
                     CountryShortname = c.CountryShortname,
                     CountryDescription = c.CountryDescription,
                     CountryCode2 = c.CountryCode2,
-                    CountryCode3 = c.CountryCode3
-                })
-                .ToList();
+                    CountryCode3 = c.CountryCode3,
+                    CountryIsoCode = c.CountryIsoCode
+                }).ToList();
 
-            _logger.LogInformation("Successfully retrieved {Count} countries", categoryVM.Count);
+            _logger.LogInformation("Successfully retrieved {Count} countries", countries.Count);
 
-            return Result.Ok(categoryVM);
+            var result = Result.Ok(countries);
+
+            if (countries.Count == 0)
+            {
+                result.WithSuccess("No country data found.");
+            }
+
+            return result;
 
 
         }

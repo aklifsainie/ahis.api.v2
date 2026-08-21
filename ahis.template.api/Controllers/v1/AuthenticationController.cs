@@ -108,7 +108,7 @@ namespace ahis.template.api.Controllers.v1
                 return ValidationProblem(modelState);
             }
 
-            return Response(result);
+            return ToActionResult(result);
         }
 
         /// <summary>
@@ -206,7 +206,7 @@ namespace ahis.template.api.Controllers.v1
             };
 
 
-            return Response(Result.Ok(loginResponse).WithSuccess("Successfully logged in"));
+            return ToActionResult(Result.Ok(loginResponse).WithSuccess("Successfully logged in"));
 
 
         }
@@ -298,7 +298,7 @@ namespace ahis.template.api.Controllers.v1
                 IsEmailConfirmed = result.Value.IsEmailConfirmed
             };
 
-            return Response(Result.Ok(loginResponse).WithSuccess("Successfully authenticated with two-factor authentication"));
+            return ToActionResult(Result.Ok(loginResponse).WithSuccess("Successfully authenticated with two-factor authentication"));
         }
 
         [HttpPost("logout")]
@@ -513,7 +513,7 @@ namespace ahis.template.api.Controllers.v1
                 IsEmailConfirmed = result.Value.IsEmailConfirmed
             };
 
-            return Response(Result.Ok(loginResponse).WithSuccess("Token refreshed"));
+            return ToActionResult(Result.Ok(loginResponse).WithSuccess("Token refreshed"));
         }
 
 
@@ -521,14 +521,14 @@ namespace ahis.template.api.Controllers.v1
         public async Task<IActionResult> DecodeToken([FromBody] string token)
         {
             var result = await _mediator.Send(new DecodeTokenQuery(token));
-            return Response(result);
+            return ToActionResult(result);
         }
 
         [HttpPost("encode-token")]
         public async Task<IActionResult> EncodeToken([FromBody] EncodeTokenQuery query)
         {
             var result = await _mediator.Send(query);
-            return Response(result);
+            return ToActionResult(result);
         }
     }
 }

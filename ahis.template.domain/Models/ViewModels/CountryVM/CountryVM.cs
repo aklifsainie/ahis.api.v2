@@ -7,5 +7,6 @@
         public string CountryDescription { get; set; }
         public string CountryCode2 { get; set; }
         public string CountryCode3 { get; set; }
+        public string CountryIsoCode { get; set; }
     }
 }

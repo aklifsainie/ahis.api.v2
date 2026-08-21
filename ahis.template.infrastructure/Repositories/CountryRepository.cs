@@ -11,11 +11,9 @@ namespace ahis.template.infrastructure.Repositories
 {
     public class CountryRepository : GenericRepository<Country>, ICountryRepository
     {
-        private readonly ApplicationDbContext _context;
 
         public CountryRepository(ApplicationDbContext context) : base(context)
         {
-            _context = context;
         }
     }
 }

@@ -27,12 +27,6 @@ namespace ahis.template.infrastructure.Repositories
 
         #region Query
 
-        // Backward-compatible parameterless overload
-        public async Task<List<T>> GetAllAsync()
-        {
-            return (await GetAllAsync(true, CancellationToken.None)).ToList();
-        }
-
         public async Task<IReadOnlyList<T>> GetAllAsync(bool asNoTracking = true, CancellationToken cancellationToken = default)
         {
             IQueryable<T> query = _dbSet.Where(x => !x.IsDelete);
@@ -65,9 +59,9 @@ namespace ahis.template.infrastructure.Repositories
             return await query.FirstOrDefaultAsync(cancellationToken);
         }
 
-        public async Task<bool> ExistsAsync(Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+        public Task<bool> ExistsAsync(Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
         {
-            return await _dbSet.AnyAsync(predicate, cancellationToken);
+            return _dbSet.Where(entity => !entity.IsDelete).AnyAsync(predicate, cancellationToken);
         }
 
         public async Task<int> CountAsync(Expression<Func<T, bool>>? predicate = null, CancellationToken cancellationToken = default)
