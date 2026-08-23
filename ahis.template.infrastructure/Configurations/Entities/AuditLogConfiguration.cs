@@ -13,7 +13,7 @@ namespace ahis.template.infrastructure.Configurations.Entities
     {
         public void Configure(EntityTypeBuilder<AuditLog> builder)
         {
-            builder.ToTable("AuditLogs");
+            builder.ToTable("AuditLog");
 
             builder.HasKey(a => a.Id);
 
@@ -37,9 +37,9 @@ namespace ahis.template.infrastructure.Configurations.Entities
 
             // The two query patterns you'll actually run: "history of this record"
             // and "what did this user do, and when".
-            builder.HasIndex(a => new { a.EntityName, a.EntityId }).HasDatabaseName("IX_AuditLogs_EntityName_EntityId");
-            builder.HasIndex(a => new { a.UserId, a.TimestampUtc }).HasDatabaseName("IX_AuditLogs_UserId_TimestampUtc");
-            builder.HasIndex(a => a.TimestampUtc).HasDatabaseName("IX_AuditLogs_TimestampUtc");
+            builder.HasIndex(a => new { a.EntityName, a.EntityId }).HasDatabaseName("IX_AuditLog_EntityName_EntityId");
+            builder.HasIndex(a => new { a.UserId, a.TimestampUtc }).HasDatabaseName("IX_AuditLog_UserId_TimestampUtc");
+            builder.HasIndex(a => a.TimestampUtc).HasDatabaseName("IX_AuditLog_TimestampUtc");
 
             // No FK relationships to User tables on purpose - audit rows
             // must survive even if the referenced record is deleted.

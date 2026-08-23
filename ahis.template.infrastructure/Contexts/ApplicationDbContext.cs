@@ -45,5 +45,16 @@ namespace ahis.template.infrastructure.Contexts
             optionsBuilder.AddInterceptors(_auditSaveChangesInterceptor);
             base.OnConfiguring(optionsBuilder);
         }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            // Auto-discover every IEntityTypeConfiguration EXCEPT CitizenConfiguration,
+            // which needs a constructor argument the assembly scanner can't supply.
+            modelBuilder.ApplyConfigurationsFromAssembly(
+                typeof(ApplicationDbContext).Assembly);
+
+        }
     }
 }
