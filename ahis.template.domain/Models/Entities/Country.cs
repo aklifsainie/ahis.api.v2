@@ -1,8 +1,9 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using ahis.template.domain.Common;
+using System.ComponentModel.DataAnnotations;
 
 namespace ahis.template.domain.Models.Entities
 {
-    public class Country : BaseEntity
+    public class Country : BaseEntity, IAuditableEntity
     {
         [Required]
         public string CountryFullname { get; set; }
