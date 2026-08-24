@@ -9,28 +9,23 @@ using System.Threading.Tasks;
 
 namespace ahis.template.infrastructure.Configurations.Entities
 {
-    public class CountryConfiguration : IEntityTypeConfiguration<Country>
+    public sealed class CountryConfiguration: IEntityTypeConfiguration<Country>
     {
         public void Configure(EntityTypeBuilder<Country> builder)
         {
             builder.ToTable("Country");
-            builder.HasKey(x => x.Id);
-            builder.Property(x => x.CountryFullname).IsRequired();
-            builder.Property(x => x.CountryShortname).IsRequired();
-            builder.Property(x => x.CountryDescription);
-            builder.Property(x => x.CountryCode2).IsRequired();
-            builder.Property(x => x.CountryCode3).IsRequired();
-            builder.Property(x => x.CountryIsoCode).IsRequired();
-            builder.Property(x => x.IsActive).HasDefaultValue(true).IsRequired();
-            builder.Property(x => x.IsDelete).HasDefaultValue(false).IsRequired();
-            builder.Property(x => x.RegisterBy).HasMaxLength(100);
-            builder.Property(x => x.RegisterDate).HasDefaultValueSql("SYSUTCDATETIME()").IsRequired();
-            builder.Property(x => x.UpdatedBy).HasMaxLength(100);
-            builder.Property(x => x.UpdatedDate);
-            builder.Property(x => x.Remarks).HasMaxLength(500);
-            builder.HasIndex(x => x.CountryIsoCode).IsUnique();
-            builder.HasIndex(x => x.CountryCode2).IsUnique();
-            builder.HasIndex(x => x.CountryCode3).IsUnique();
+            builder.HasKey(country => country.Id);
+            builder.Property(country => country.CountryFullname).HasMaxLength(200).IsRequired();
+            builder.Property(country => country.CountryShortname).HasMaxLength(100).IsRequired();
+            builder.Property(country => country.CountryDescription).HasMaxLength(1000);
+            builder.Property(country => country.CountryCode2).HasMaxLength(2).IsUnicode(false).IsRequired();
+            builder.Property(country => country.CountryCode3).HasMaxLength(3).IsUnicode(false).IsRequired();
+            builder.Property(country => country.CountryIsoCode).HasMaxLength(3).IsUnicode(false).IsRequired();
+
+            builder.HasIndex(country => country.CountryFullname).IsUnique();
+            builder.HasIndex(country => country.CountryCode2).IsUnique();
+            builder.HasIndex(country => country.CountryCode3).IsUnique();
+            builder.HasIndex(country => country.CountryIsoCode).IsUnique();
         }
     }
 }

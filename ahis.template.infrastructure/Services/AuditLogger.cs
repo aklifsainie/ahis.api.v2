@@ -3,6 +3,8 @@ using ahis.template.application.Interfaces.Services;
 using ahis.template.domain.Enums;
 using ahis.template.domain.Models.Entities;
 using ahis.template.infrastructure.Contexts;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,11 +17,13 @@ namespace ahis.template.infrastructure.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly ICurrentUserService _currentUserService;
+        private readonly ILogger<AuditLogger> _logger;
 
-        public AuditLogger(ApplicationDbContext context, ICurrentUserService currentUserService)
+        public AuditLogger(ApplicationDbContext context, ICurrentUserService currentUserService, ILogger<AuditLogger> logger)
         {
             _context = context;
             _currentUserService = currentUserService;
+            _logger = logger;
         }
 
         public async Task LogAsync(
@@ -50,20 +54,20 @@ namespace ahis.template.infrastructure.Services
 
             _context.AuditLog.Add(log);
 
-            // Commit immediately and independently - a read query never calls
-            // SaveChanges for business data, so this is the only write happening.
-            // If this throws, we deliberately swallow it below rather than fail
-            // the citizen's actual read request just because audit logging hiccuped.
             try
             {
                 await _context.SaveChangesAsync(cancellationToken);
             }
-            catch
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
             {
-                // Audit logging must never break the primary user-facing operation.
-                // Replace this with your actual logging framework (Serilog, etc.)
-                // so failures are still visible to ops - do not leave this empty in prod.
-                // _logger.LogError(ex, "Failed to write audit log for {Entity}/{Id}", entityName, entityId);
+                _context.Entry(log).State = EntityState.Detached;
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _context.Entry(log).State = EntityState.Detached;
+                _logger.LogError(exception, "Failed to write audit log for {EntityName} with ID {EntityId}", entityName, entityId);
             }
         }
     }

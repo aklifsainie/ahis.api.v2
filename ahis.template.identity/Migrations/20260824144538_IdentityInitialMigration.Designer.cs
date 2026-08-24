@@ -12,7 +12,7 @@ using ahis.template.identity.Contexts;
 namespace ahis.template.identity.Migrations
 {
     [DbContext(typeof(IdentityContext))]
-    [Migration("20260821070217_IdentityInitialMigration")]
+    [Migration("20260824144538_IdentityInitialMigration")]
     partial class IdentityInitialMigration
     {
         /// <inheritdoc />
