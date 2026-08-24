@@ -1,85 +1,85 @@
 ﻿using FluentResults;
 using ahis.template.application.Shared;
-using Microsoft.AspNetCore.Diagnostics;
-using Microsoft.AspNetCore.Mvc;
 using ahis.template.application.Shared.Errors;
-
+using Microsoft.AspNetCore.Mvc;
 
 namespace ahis.template.api.Controllers
 {
-    public partial class BaseApiController : ControllerBase
+    public abstract class BaseApiController : ControllerBase
     {
-        protected new IActionResult Response<T>(
-            Result<T> result)
+        protected IActionResult ToActionResult<T>(Result<T>? result)
         {
-            // Handle null result
-            if (result is null ||
-                (result.IsSuccess && result.ValueOrDefault is null))
-                return HandleNullProblem();
-
-            // Handle success result
-            if (result.IsSuccess)
+            if (result is null)
             {
-                string? message = result.Successes.FirstOrDefault()?.Message;
-                return Ok(new ResponseDto<T>(result.ValueOrDefault, message));
+                return InternalServerProblem();
             }
 
-            // Handle FluentValidation errors
-            if (result.Errors.Any(x => x is ValidationError))
-                return HandleValidationProblem(result);
-
-            // Handle FluentResult errors
-            return HandleFluentResultProblem(result);
-        }
-
-        public IActionResult PagedResponse<T>(
-            Result<PagedResult<T>> result)
-        {
-            // Handle null result
-            if (result is null ||
-                (result.IsSuccess && result.ValueOrDefault is null))
-                return HandleNullProblem();
-
-            // Handle success result
             if (result.IsSuccess)
-                return Ok(new PagedResponseDto<T>(
-                result.Value.Data,
-                result.Value.TotalCount,
-                result.Value.PageNumber,
-                result.Value.PageSize
-                ));
+            {
+                if (result.ValueOrDefault is null)
+                {
+                    return InternalServerProblem();
+                }
 
-            // Handle FluentValidation errors
-            if (result.Errors.Any(x => x is ValidationError))
+                var message = result.Successes
+                    .FirstOrDefault()?
+                    .Message;
+
+                return Ok(new ResponseDto<T>(
+                    result.ValueOrDefault,
+                    message));
+            }
+
+            if (result.Errors.Any(error => error is ValidationError))
+            {
                 return HandleValidationProblem(result);
+            }
 
-            // Handle FluentResult errors
-            return HandleFluentResultProblem(result);
+            return HandleResultProblem(result);
         }
 
-        protected IActionResult UnhandledProblem()
+        protected IActionResult ToPagedActionResult<T>(
+            Result<PagedResult<T>>? result)
         {
-            Exception? ex = HttpContext.Features.Get<IExceptionHandlerFeature>()?.Error;
-            int statusCode = StatusCodes.Status500InternalServerError;
+            if (result is null)
+            {
+                return InternalServerProblem();
+            }
 
-            return Problem(
-                    detail: ex?.Message ?? "An error has occurred.",
-                    statusCode: statusCode);
-        }
+            if (result.IsSuccess)
+            {
+                if (result.ValueOrDefault is null)
+                {
+                    return InternalServerProblem();
+                }
 
-        private IActionResult HandleNullProblem()
-        {
-            int statusCode = StatusCodes.Status404NotFound;
+                var pagedResult = result.Value;
 
-            return Problem(
-                statusCode: statusCode);
+                return Ok(new PagedResponseDto<T>(
+                    pagedResult.Data,
+                    pagedResult.TotalCount,
+                    pagedResult.PageNumber,
+                    pagedResult.PageSize));
+            }
+
+            if (result.Errors.Any(error => error is ValidationError))
+            {
+                return HandleValidationProblem(result);
+            }
+
+            return HandleResultProblem(result);
         }
 
         private IActionResult HandleValidationProblem<T>(Result<T> result)
         {
-            foreach (KeyValuePair<string, object> metadata in result.Errors.SelectMany(e => e.Metadata))
+            foreach (var metadata in result.Errors
+                         .OfType<ValidationError>()
+                         .SelectMany(error => error.Metadata))
             {
-                ModelState.TryAddModelError(metadata.Key, metadata.Value?.ToString() ?? $"{metadata.Key} is invalid.");
+                ModelState.TryAddModelError(
+                    metadata.Key,
+                    metadata.Value?.ToString()
+                    ?? $"{metadata.Key} is invalid.");
             }
 
             return ValidationProblem(
@@ -88,25 +88,34 @@ namespace ahis.template.api.Controllers
                 modelStateDictionary: ModelState);
         }
 
-        private IActionResult HandleFluentResultProblem<T>(Result<T> result)
+        private IActionResult HandleResultProblem<T>(Result<T> result)
         {
-            IError? firstError = result.Errors.FirstOrDefault();
+            var error = result.Errors.FirstOrDefault();
 
-            // Unhandled errors
-            if (firstError is null)
-                return UnhandledProblem();
-
-            // Handle FluentResult errors
-            int statusCode = firstError switch
+            return error switch
             {
-                ValidationError => StatusCodes.Status400BadRequest,
-                EntityNotFoundError => StatusCodes.Status404NotFound,
-                _ => StatusCodes.Status500InternalServerError
-            };
+                EntityNotFoundError notFoundError =>
+                    Problem(
+                        title: "Resource not found",
+                        detail: notFoundError.Message,
+                        statusCode: StatusCodes.Status404NotFound),
 
+                ConflictError conflictError =>
+                    Problem(
+                        title: "Conflict",
+                        detail: conflictError.Message,
+                        statusCode: StatusCodes.Status409Conflict),
+
+                _ => InternalServerProblem()
+            };
+        }
+
+        private IActionResult InternalServerProblem()
+        {
             return Problem(
-                detail: firstError.Message,
-                statusCode: statusCode);
+                title: "Internal server error",
+                detail: "An unexpected error occurred.",
+                statusCode: StatusCodes.Status500InternalServerError);
         }
     }
 }

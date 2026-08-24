@@ -10,5 +10,11 @@ namespace ahis.template.application.Interfaces.Services
     {
         string? UserId { get; }
         bool IsAuthenticated { get; }
+
+        string? UserName { get; }
+        string? UserRole { get; }
+        string? IpAddress { get; }
+        string? UserAgent { get; }
+        string? CorrelationId { get; }
     }
 }

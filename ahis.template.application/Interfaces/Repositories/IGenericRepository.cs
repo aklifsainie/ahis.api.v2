@@ -16,7 +16,6 @@ namespace ahis.template.application.Interfaces.Repositories
         /// Backwards-compatible: Get all non-deleted entities as a List.
         /// This overload is provided to support existing code/tests that rely on a parameterless method.
         /// </summary>
-        Task<List<T>> GetAllAsync();
 
         /// <summary>
         /// Get all non-deleted entities.

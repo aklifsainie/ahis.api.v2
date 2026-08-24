@@ -12,8 +12,8 @@ using ahis.template.identity.Contexts;
 namespace ahis.template.identity.Migrations
 {
     [DbContext(typeof(IdentityContext))]
-    [Migration("20251226072048_Identity_InitialMigration")]
-    partial class Identity_InitialMigration
+    [Migration("20260824144538_IdentityInitialMigration")]
+    partial class IdentityInitialMigration
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -177,7 +177,7 @@ namespace ahis.template.identity.Migrations
                     b.ToTable("IdentityUserTokens", (string)null);
                 });
 
-            modelBuilder.Entity("ahis.template.identity.Models.ApplicationUser", b =>
+            modelBuilder.Entity("ahis.template.identity.Models.Entities.ApplicationUser", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("nvarchar(450)");
@@ -289,7 +289,7 @@ namespace ahis.template.identity.Migrations
                     b.ToTable("IdentityUsers", (string)null);
                 });
 
-            modelBuilder.Entity("ahis.template.identity.Models.RefreshToken", b =>
+            modelBuilder.Entity("ahis.template.identity.Models.Entities.RefreshToken", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -338,7 +338,7 @@ namespace ahis.template.identity.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<string>", b =>
                 {
-                    b.HasOne("ahis.template.identity.Models.ApplicationUser", null)
+                    b.HasOne("ahis.template.identity.Models.Entities.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -347,7 +347,7 @@ namespace ahis.template.identity.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
                 {
-                    b.HasOne("ahis.template.identity.Models.ApplicationUser", null)
+                    b.HasOne("ahis.template.identity.Models.Entities.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -362,7 +362,7 @@ namespace ahis.template.identity.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("ahis.template.identity.Models.ApplicationUser", null)
+                    b.HasOne("ahis.template.identity.Models.Entities.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -371,7 +371,7 @@ namespace ahis.template.identity.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserToken<string>", b =>
                 {
-                    b.HasOne("ahis.template.identity.Models.ApplicationUser", null)
+                    b.HasOne("ahis.template.identity.Models.Entities.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)

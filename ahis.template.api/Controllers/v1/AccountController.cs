@@ -191,7 +191,7 @@ namespace ahis.template.api.Controllers.v1
                 return ValidationProblem(modelState);
             }
 
-            return Response(result);
+            return ToActionResult(result);
         }
 
         /// <summary>
@@ -234,7 +234,7 @@ namespace ahis.template.api.Controllers.v1
                 return ValidationProblem(modelState);
             }
 
-            return Response(result);
+            return ToActionResult(result);
         }
 
         /// <summary>
@@ -302,7 +302,7 @@ namespace ahis.template.api.Controllers.v1
                 return ValidationProblem(modelState);
             }
 
-            return Response(result);
+            return ToActionResult(result);
         }
 
 
