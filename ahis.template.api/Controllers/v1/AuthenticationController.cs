@@ -91,6 +91,7 @@ namespace ahis.template.api.Controllers.v1
         /// 3. If **Two-Factor Authentication (2FA) is enabled**:
         ///    - No access or refresh tokens are issued
         ///    - Response indicates `requiresTwoFactor = true`
+        ///    - A five-minute HttpOnly challenge cookie is issued and must be retained for verification
         ///    - Frontend must call **Verify 2FA** endpoint
         /// 4. If authentication is fully successful:
         ///    - An **access token** is returned in the response body
@@ -177,6 +178,7 @@ namespace ahis.template.api.Controllers.v1
         ///
         /// Flow:
         /// 1. Frontend submits the 2FA verification code (e.g., from Authenticator app).
+        ///    The short-lived challenge cookie issued by login identifies the pending sign-in.
         /// 2. Backend validates the code against the selected 2FA provider.
         /// 3. If valid:
         ///    - An access token is returned in the response body.

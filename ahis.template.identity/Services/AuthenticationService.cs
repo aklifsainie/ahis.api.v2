@@ -84,7 +84,11 @@ namespace ahis.template.identity.Services
                     {
                         var challengeResult = await IssueTwoFactorChallengeAsync(user);
                         return challengeResult.IsSuccess
-                            ? Result.Ok(new AuthenticationResponseVM { RequiresTwoFactor = true })
+                            ? Result.Ok(new AuthenticationResponseVM
+                            {
+                                RequiresTwoFactor = true,
+                                IsEmailConfirmed = await _userManager.IsEmailConfirmedAsync(user)
+                            })
                             : Result.Fail<AuthenticationResponseVM>("Login failed.");
                     }
 
@@ -275,7 +279,8 @@ namespace ahis.template.identity.Services
                         int.Parse(_configuration["Jwt:AccessTokenExpirySeconds"] ?? "3600"),
                     RefreshToken = newRefreshToken,
                     RefreshTokenExpiresAt = newRefreshExpiresAt,
-                    UserId = user.Id
+                    UserId = user.Id,
+                    IsEmailConfirmed = await _userManager.IsEmailConfirmedAsync(user)
                 });
             }
             catch (Exception ex)
@@ -373,7 +378,8 @@ namespace ahis.template.identity.Services
                     RefreshToken = refreshToken,
                     RefreshTokenExpiresAt = refreshExpiresAt,
                     UserId = user.Id.ToString(),
-                    RequiresTwoFactor = false
+                    RequiresTwoFactor = false,
+                    IsEmailConfirmed = await _userManager.IsEmailConfirmedAsync(user)
                 });
             }
             catch (Exception ex)
@@ -505,8 +511,9 @@ namespace ahis.template.identity.Services
                 return Result.Fail("Unable to create two-factor challenge.");
 
             var identity = new ClaimsIdentity(Microsoft.AspNetCore.Identity.IdentityConstants.TwoFactorUserIdScheme);
-            // SignInManager.GetTwoFactorAuthenticationUserAsync reads the user ID
-            // from NameIdentifier when resolving the protected 2FA challenge.
+            // SignInManager.GetTwoFactorAuthenticationUserAsync resolves the protected
+            // two-factor user from Name. Keep NameIdentifier for this service's binding check.
+            identity.AddClaim(new Claim(ClaimTypes.Name, user.Id));
             identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, user.Id));
             identity.AddClaim(new Claim(IIdentityTokenStateService.SecurityVersionClaim, securityVersion));
 

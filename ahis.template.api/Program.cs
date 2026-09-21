@@ -370,7 +370,20 @@ namespace ahis.template.api
                 options.Cookie.HttpOnly = true;
                 options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
                 options.Cookie.SameSite = SameSiteMode.Lax;
-                options.Cookie.Path = "/api/authentication";
+                options.Cookie.Path = "/api";
+                options.Events.OnSigningIn = context =>
+                {
+                    // Clear challenges issued before the path was widened. Without this,
+                    // a browser can send the old, more-specific cookie before the new one.
+                    context.Response.Cookies.Delete(context.Options.Cookie.Name!, new CookieOptions
+                    {
+                        HttpOnly = true,
+                        Secure = true,
+                        SameSite = SameSiteMode.Lax,
+                        Path = "/api/authentication"
+                    });
+                    return Task.CompletedTask;
+                };
             });
 
             services.ConfigureApplicationCookie(options => { options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; }; });
