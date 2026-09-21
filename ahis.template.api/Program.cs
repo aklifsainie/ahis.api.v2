@@ -5,6 +5,7 @@ using ahis.template.application.Services;
 using ahis.template.identity;
 using ahis.template.identity.Contexts;
 using ahis.template.identity.Models.Entities;
+using ahis.template.identity.Interfaces;
 using ahis.template.infrastructure;
 using ahis.template.infrastructure.Contexts;
 using ahis.template.infrastructure.SharedKernel;
@@ -275,32 +276,11 @@ namespace ahis.template.api
                         return Task.CompletedTask;
                     },
                     OnTokenValidated = async context => {
-
-                        var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
-
+                        var tokenState = context.HttpContext.RequestServices.GetRequiredService<IIdentityTokenStateService>();
                         var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                        if (string.IsNullOrWhiteSpace(userId))
-                        {
-                            context.Fail("Invalid token: missing user id");
-                            return;
-                        }
-
-                        var user = await userManager.FindByIdAsync(userId);
-
-                        // CRITICAL CHECK
-                        if (user == null)
-                        {
-                            context.Fail("User no longer exists");
-                            return;
-                        }
-
-                        // Optional hardening
-                        if (user.LockoutEnabled && user.LockoutEnd > DateTimeOffset.UtcNow)
-                        {
-                            context.Fail("User is locked out");
-                            return;
-                        }
+                        var version = context.Principal?.FindFirstValue(IIdentityTokenStateService.SecurityVersionClaim);
+                        if (!await tokenState.ValidateAsync(userId, version))
+                            context.Fail("Invalid bearer token");
                     }
                 };
             })
@@ -346,8 +326,5 @@ namespace ahis.template.api
             services.ConfigureApplicationCookie(options => { options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; }; });
         }
 
-    } 
-
+    }
 }
-
-            

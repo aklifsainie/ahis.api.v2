@@ -30,6 +30,7 @@ namespace ahis.template.identity.Services
         private readonly IdentityUnitOfWork _unitOfWork;
         private readonly IConfiguration _configuration;
         private readonly ILogger<AuthenticationService> _logger;
+        private readonly IIdentityTokenStateService _tokenState;
 
         public AuthenticationService(
             UserManager<ApplicationUser> userManager,
@@ -38,7 +39,8 @@ namespace ahis.template.identity.Services
             IEmailSender emailSender,
             IdentityUnitOfWork unitOfWork,
             IConfiguration configuration,
-            ILogger<AuthenticationService> logger)
+            ILogger<AuthenticationService> logger,
+            IIdentityTokenStateService tokenState)
         {
             _userManager = userManager;
             _signInManager = signInManager;
@@ -47,6 +49,7 @@ namespace ahis.template.identity.Services
             _unitOfWork = unitOfWork;
             _configuration = configuration;
             _logger = logger;
+            _tokenState = tokenState;
         }
 
         public async Task<Result<AuthenticationResponseVM>> CheckAccountStateByEmailAsync(string userNameOrEmail)
@@ -90,7 +93,7 @@ namespace ahis.template.identity.Services
                 if (user == null)
                     return Result.Fail<AuthenticationResponseVM>("Invalid credentials.");
 
-                if (!user.IsActive || user.IsDeleted)
+                if (!_tokenState.IsEligible(user))
                     return Result.Fail<AuthenticationResponseVM>("User is not active.");
 
 
@@ -112,14 +115,17 @@ namespace ahis.template.identity.Services
                 }
 
                 // create tokens
-                var accessToken = await GenerateJwtTokenAsync(user);
+                var securityVersion = _tokenState.GetSecurityVersion(user);
+                if (securityVersion is null)
+                    return Result.Fail<AuthenticationResponseVM>("Login failed.");
+                var accessToken = await GenerateJwtTokenAsync(user, securityVersion);
                 var (refreshToken, refreshExpiresAt) = GenerateRefreshToken();
 
                 // persist refresh token
 
                 await _unitOfWork.BeginTransactionAsync();
 
-                await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt);
+                await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
 
                 await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
@@ -187,10 +193,9 @@ namespace ahis.template.identity.Services
 
         public async Task<Result<AuthenticationResponseVM>> RefreshTokenAsync(string refreshToken, CancellationToken cancellationToken)
         {
-
-            await _unitOfWork.BeginTransactionAsync();
             try
             {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
                 var storedToken = await _context.RefreshTokens
                     .AsTracking()
                     .FirstOrDefaultAsync(x => x.Token == refreshToken, cancellationToken);
@@ -204,34 +209,44 @@ namespace ahis.template.identity.Services
                         "Refresh token reuse detected for user {UserId}",
                         storedToken.UserId);
 
-                    await RevokeRefreshTokensAsync(storedToken.UserId);
-                    await _unitOfWork.CommitTransactionAsync();
+                    var reusedBy = await _userManager.FindByIdAsync(storedToken.UserId);
+                    if (reusedBy is not null)
+                    {
+                        var invalidation = await _tokenState.InvalidateAsync(reusedBy, cancellationToken);
+                        if (!invalidation.Succeeded)
+                            return Result.Fail("Invalid refresh token.");
+                    }
+                    await _unitOfWork.CommitTransactionAsync(cancellationToken);
 
-                    return Result.Fail(
-                        "Refresh token reuse detected. All sessions revoked.");
+                    return Result.Fail("Invalid refresh token.");
                 }
 
                 if (storedToken.ExpiresAt <= DateTime.UtcNow)
-                    return Result.Fail("Expired refresh token.");
+                    return Result.Fail("Invalid refresh token.");
 
                 var user = await _userManager.FindByIdAsync(storedToken.UserId);
-                if (user == null)
-                    return Result.Fail("User not found.");
+                if (!_tokenState.Matches(user, storedToken.SecurityVersion))
+                    return Result.Fail("Invalid refresh token.");
+
+                var securityVersion = _tokenState.GetSecurityVersion(user!);
+                if (securityVersion is null)
+                    return Result.Fail("Invalid refresh token.");
 
                 // Rotate token
                 storedToken.IsRevoked = true;
                 storedToken.RevokedAt = DateTime.UtcNow;
 
-                var accessToken = await GenerateJwtTokenAsync(user);
+                var accessToken = await GenerateJwtTokenAsync(user!, securityVersion);
                 var (newRefreshToken, newRefreshExpiresAt) = GenerateRefreshToken();
 
                 await StoreRefreshTokenAsync(
-                    user.Id,
+                    user!.Id,
                     newRefreshToken,
-                    newRefreshExpiresAt);
+                    newRefreshExpiresAt,
+                    securityVersion);
 
-                await _unitOfWork.SaveChangesAsync();
-                await _unitOfWork.CommitTransactionAsync();
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
 
                 return Result.Ok(new AuthenticationResponseVM
                 {
@@ -245,26 +260,27 @@ namespace ahis.template.identity.Services
             }
             catch (Exception ex)
             {
-                await _unitOfWork.RollbackTransactionAsync();
-
                 _logger.LogError(ex, "RefreshTokenAsync failed");
 
                 return Result.Fail("Failed to refresh token.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
             }
         }
 
 
         public async Task<Result<AuthenticationResponseVM>> VerifyTwoFactorAsync(string userId, TwoFactorProviderEnum provider, string code, bool rememberMachine = false)
         {
-            await _unitOfWork.BeginTransactionAsync();
-
             try
             {
+                await _unitOfWork.BeginTransactionAsync();
                 var user = await _userManager.FindByIdAsync(userId);
                 if (user == null)
                     return Result.Fail("User not found.");
 
-                if (!user.TwoFactorEnabled)
+                if (!_tokenState.IsEligible(user) || !user.TwoFactorEnabled)
                     return Result.Fail("Two-factor authentication is not enabled.");
 
                 SignInResult signInResult;
@@ -301,10 +317,13 @@ namespace ahis.template.identity.Services
                 }
 
                 // Generate tokens
-                var accessToken = await GenerateJwtTokenAsync(user);
+                var securityVersion = _tokenState.GetSecurityVersion(user);
+                if (securityVersion is null)
+                    return Result.Fail("Verify 2FA failed.");
+                var accessToken = await GenerateJwtTokenAsync(user, securityVersion);
                 var (refreshToken, refreshExpiresAt) = GenerateRefreshToken();
 
-                await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt);
+                await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
 
                 await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
@@ -322,9 +341,12 @@ namespace ahis.template.identity.Services
             }
             catch (Exception ex)
             {
-                await _unitOfWork.RollbackTransactionAsync();
                 _logger.LogError(ex, "Verify 2FA failed");
                 return Result.Fail("Verify 2FA failed.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync();
             }
         }
 
@@ -332,37 +354,28 @@ namespace ahis.template.identity.Services
 
         public async Task<Result> RevokeRefreshTokensAsync(string userId)
         {
-            await _unitOfWork.BeginTransactionAsync();
-
             try
             {
-                var tokens = await _context.RefreshTokens
-                    .Where(x => x.UserId == userId && !x.IsRevoked)
-                    .ToListAsync();
+                await _unitOfWork.BeginTransactionAsync();
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user is null)
+                    return Result.Fail("User not found.");
 
-                if (!tokens.Any())
-                    return Result.Ok(); // idempotent behavior
-
-                foreach (var token in tokens)
-                {
-                    token.IsRevoked = true;
-                }
-
-                await _unitOfWork.SaveChangesAsync();
+                var invalidation = await _tokenState.InvalidateAsync(user);
+                if (!invalidation.Succeeded)
+                    return Result.Fail("Failed to revoke refresh tokens.");
                 await _unitOfWork.CommitTransactionAsync();
-
-                _logger.LogInformation(
-                    "Revoked {Count} refresh tokens for user {UserId}",
-                    tokens.Count,
-                    userId);
 
                 return Result.Ok();
             }
             catch (Exception ex)
             {
-                await _unitOfWork.RollbackTransactionAsync();
                 _logger.LogError(ex, "Failed to revoke refresh tokens for user {UserId}", userId);
                 return Result.Fail("Failed to revoke refresh tokens.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync();
             }
         }
 
@@ -431,7 +444,9 @@ namespace ahis.template.identity.Services
             }
 
             // Optional but recommended: invalidate sessions
-            await _userManager.UpdateSecurityStampAsync(user);
+            var invalidation = await _tokenState.InvalidateAsync(user);
+            if (!invalidation.Succeeded)
+                return Result.Fail("Failed to invalidate sessions.");
 
             return Result.Ok();
         }
@@ -440,7 +455,7 @@ namespace ahis.template.identity.Services
 
         #region Helpers
 
-        private async Task<string> GenerateJwtTokenAsync(ApplicationUser user)
+        private async Task<string> GenerateJwtTokenAsync(ApplicationUser user, string securityVersion)
         {
             var claims = new List<Claim>
             {
@@ -457,6 +472,8 @@ namespace ahis.template.identity.Services
                 new Claim(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
+
+            claims.Add(new Claim(IIdentityTokenStateService.SecurityVersionClaim, securityVersion));
 
             // Add custom user claims,if any
             var userClaims = await _userManager.GetClaimsAsync(user);
@@ -495,12 +512,13 @@ namespace ahis.template.identity.Services
             return (token, expires);
         }
 
-        private async Task StoreRefreshTokenAsync(string userId, string token, DateTime expiresAt)
+        private async Task StoreRefreshTokenAsync(string userId, string token, DateTime expiresAt, string securityVersion)
         {
             var refreshToken = new RefreshToken
             {
                 UserId = userId,
                 Token = token,
+                SecurityVersion = securityVersion,
                 ExpiresAt = expiresAt,
                 CreatedAt = DateTime.UtcNow,
                 IsRevoked = false,

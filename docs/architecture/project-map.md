@@ -7,7 +7,7 @@
 | `ahis.template.domain` | Class library | Shared entities, ViewModels, enums, base models, unit-of-work contract | None | Domain models |
 | `ahis.template.infrastructure` | Class library | Application EF context/configurations/migrations, repositories, API-key and audit implementations | Application, Domain | SQL Server persistence |
 | `ahis.template.identity` | Class library | Identity entities, account/authentication services, Identity context and migrations | Domain | Identity persistence |
-| `ahis.template.test` | Test project | Handler-level unit tests | Application, Domain | xUnit tests |
+| `ahis.template.test` | Test project | Handler and Identity token-state unit tests | Application, Domain, Identity | xUnit tests |
 
 ## Package observations
 

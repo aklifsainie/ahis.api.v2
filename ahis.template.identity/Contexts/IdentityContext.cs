@@ -59,6 +59,7 @@ namespace ahis.template.identity.Contexts
                 b.ToTable("RefreshTokens");
                 b.HasKey(x => x.Id);
                 b.Property(x => x.Token).IsRequired().HasMaxLength(450);
+                b.Property(x => x.SecurityVersion).HasMaxLength(64);
                 b.Property(x => x.IsRevoked).HasDefaultValue(false);
                 b.HasIndex(x => x.UserId);
             });

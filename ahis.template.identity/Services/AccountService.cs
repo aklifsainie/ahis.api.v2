@@ -21,19 +21,22 @@ namespace ahis.template.identity.Services
         private readonly IEmailSender _emailSender;
         private readonly IConfiguration _configuration;
         private readonly ILogger<AccountService> _logger;
+        private readonly IIdentityTokenStateService _tokenState;
 
         public AccountService(
             UserManager<ApplicationUser> userManager,
             SignInManager<ApplicationUser> signInManager,
             IEmailSender emailSender,
             IConfiguration configuration,
-            ILogger<AccountService> logger)
+            ILogger<AccountService> logger,
+            IIdentityTokenStateService tokenState)
         {
             _userManager = userManager;
             _signInManager = signInManager;
             _emailSender = emailSender;
             _configuration = configuration;
             _logger = logger;
+            _tokenState = tokenState;
         }
 
         // 1. Register new user (no password yet)
@@ -297,9 +300,12 @@ namespace ahis.template.identity.Services
                 user.RecoveryCodes = null;
                 user.TwoFactorEnabledAt = null;
 
-                await _userManager.UpdateAsync(user);
+                var update = await _userManager.UpdateAsync(user);
+                if (!update.Succeeded)
+                    return Result.Fail("Failed to disable authenticator.");
 
-                return Result.Ok();
+                var invalidation = await _tokenState.InvalidateAsync(user);
+                return invalidation.Succeeded ? Result.Ok() : Result.Fail("Failed to invalidate sessions.");
             }
             catch (Exception ex)
             {
@@ -338,7 +344,9 @@ namespace ahis.template.identity.Services
             }
 
             // Invalidate all existing sessions
-            await _userManager.UpdateSecurityStampAsync(user);
+            var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+            if (!invalidation.Succeeded)
+                return Result.Fail("Failed to invalidate sessions.");
 
             _logger.LogInformation(
                 "Password changed successfully for user {UserId}",
