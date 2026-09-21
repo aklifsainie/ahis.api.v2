@@ -13,6 +13,7 @@ namespace ahis.template.application.Interfaces.Services
 
         string? UserName { get; }
         string? UserRole { get; }
+        Guid? SessionId { get; }
         string? IpAddress { get; }
         string? UserAgent { get; }
         string? CorrelationId { get; }

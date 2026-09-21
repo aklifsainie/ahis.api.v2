@@ -9,6 +9,8 @@ using ahis.template.identity.Interfaces;
 using ahis.template.identity.Models.Entities;
 using ahis.template.identity.Models.DTOs;
 using ahis.template.identity.SharedKernel;
+using ahis.template.identity.Contexts;
+using Microsoft.EntityFrameworkCore;
 
 
 namespace ahis.template.identity.Services
@@ -25,6 +27,7 @@ namespace ahis.template.identity.Services
         private readonly IIdentityTokenStateService _tokenState;
         private readonly IAccountSecurityProofService _securityProof;
         private readonly IdentityUnitOfWork _unitOfWork;
+        private readonly IdentityContext _context;
 
         public AccountService(
             UserManager<ApplicationUser> userManager,
@@ -34,7 +37,8 @@ namespace ahis.template.identity.Services
             ILogger<AccountService> logger,
             IIdentityTokenStateService tokenState,
             IAccountSecurityProofService securityProof,
-            IdentityUnitOfWork unitOfWork)
+            IdentityUnitOfWork unitOfWork,
+            IdentityContext context)
         {
             _userManager = userManager;
             _signInManager = signInManager;
@@ -44,6 +48,7 @@ namespace ahis.template.identity.Services
             _tokenState = tokenState;
             _securityProof = securityProof;
             _unitOfWork = unitOfWork;
+            _context = context;
         }
 
         // 1. Register new user (no password yet)
@@ -492,6 +497,37 @@ namespace ahis.template.identity.Services
             {
                 await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
             }
+        }
+
+        public async Task<Result<(IReadOnlyList<ActiveSessionDto> Sessions, int TotalCount)>> GetActiveSessionsAsync(
+            string userId,
+            Guid? currentSessionId,
+            int pageNumber,
+            int pageSize,
+            CancellationToken cancellationToken)
+        {
+            var now = DateTime.UtcNow;
+            var sessions = _context.RefreshSessions
+                .AsNoTracking()
+                .Where(session => session.UserId == userId && !session.IsRevoked && session.ExpiresAt > now);
+
+            var totalCount = await sessions.CountAsync(cancellationToken);
+            var items = await sessions
+                .OrderByDescending(session => session.LastUsedAt)
+                .ThenByDescending(session => session.Id)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .Select(session => new ActiveSessionDto
+                {
+                    SessionId = session.PublicId,
+                    CreatedAt = session.CreatedAt,
+                    LastUsedAt = session.LastUsedAt,
+                    ExpiresAt = session.ExpiresAt,
+                    IsCurrent = currentSessionId.HasValue && session.PublicId == currentSessionId.Value
+                })
+                .ToListAsync(cancellationToken);
+
+            return Result.Ok(((IReadOnlyList<ActiveSessionDto>)items, totalCount));
         }
 
         public async Task<Result> ResetAuthenticatorAsync(

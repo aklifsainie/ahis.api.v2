@@ -101,14 +101,15 @@ namespace ahis.template.identity.Services
                 var securityVersion = _tokenState.GetSecurityVersion(user);
                 if (securityVersion is null)
                     return Result.Fail<AuthenticationResponseVM>("Login failed.");
-                var accessToken = await GenerateJwtTokenAsync(user, securityVersion);
                 var (refreshToken, refreshExpiresAt) = GenerateRefreshToken();
 
                 // persist refresh token
 
                 await _unitOfWork.BeginTransactionAsync();
 
-                await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
+                var sessionPublicId = await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
+
+                var accessToken = await GenerateJwtTokenAsync(user, securityVersion, sessionPublicId);
 
                 await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
@@ -252,7 +253,6 @@ namespace ahis.template.identity.Services
                     return Result.Fail("Invalid refresh token.");
                 }
 
-                var accessToken = await GenerateJwtTokenAsync(user!, securityVersion);
                 var (newRefreshToken, newRefreshExpiresAt) = GenerateRefreshToken();
 
                 var updatedSession = await _context.RefreshSessions
@@ -264,13 +264,15 @@ namespace ahis.template.identity.Services
                 if (updatedSession != 1)
                     return Result.Fail("Invalid refresh token.");
 
-                await StoreRefreshTokenAsync(
+                var sessionPublicId = await StoreRefreshTokenAsync(
                     user!.Id,
                     newRefreshToken,
                     newRefreshExpiresAt,
                     securityVersion,
                     storedToken.SessionId,
                     storedToken.Id);
+
+                var accessToken = await GenerateJwtTokenAsync(user!, securityVersion, sessionPublicId);
 
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
                 await _unitOfWork.CommitTransactionAsync(cancellationToken);
@@ -365,10 +367,10 @@ namespace ahis.template.identity.Services
                 var securityVersion = _tokenState.GetSecurityVersion(user);
                 if (securityVersion is null)
                     return Result.Fail("Verify 2FA failed.");
-                var accessToken = await GenerateJwtTokenAsync(user, securityVersion);
                 var (refreshToken, refreshExpiresAt) = GenerateRefreshToken();
 
-                await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
+                var sessionPublicId = await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
+                var accessToken = await GenerateJwtTokenAsync(user, securityVersion, sessionPublicId);
 
                 await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitTransactionAsync();
@@ -554,7 +556,7 @@ namespace ahis.template.identity.Services
                     Microsoft.AspNetCore.Identity.IdentityConstants.ApplicationScheme);
         }
 
-        private async Task<string> GenerateJwtTokenAsync(ApplicationUser user, string securityVersion)
+        private async Task<string> GenerateJwtTokenAsync(ApplicationUser user, string securityVersion, Guid sessionPublicId)
         {
             var claims = new List<Claim>
             {
@@ -574,6 +576,7 @@ namespace ahis.template.identity.Services
 
             claims.Add(new Claim(IIdentityTokenStateService.SecurityVersionClaim, securityVersion));
             claims.Add(new Claim(IIdentityTokenStateService.TokenUseClaim, IIdentityTokenStateService.AccessTokenUse));
+            claims.Add(new Claim("session_id", sessionPublicId.ToString()));
 
             // Add custom user claims,if any
             var userClaims = await _userManager.GetClaimsAsync(user);
@@ -612,7 +615,7 @@ namespace ahis.template.identity.Services
             return (token, expires);
         }
 
-        private async Task StoreRefreshTokenAsync(
+        private async Task<Guid> StoreRefreshTokenAsync(
             string userId,
             string token,
             DateTime expiresAt,
@@ -621,6 +624,7 @@ namespace ahis.template.identity.Services
             int? parentTokenId = null)
         {
             var now = DateTime.UtcNow;
+            Guid sessionPublicId;
             if (sessionId is null)
             {
                 var session = new RefreshSession
@@ -636,6 +640,14 @@ namespace ahis.template.identity.Services
                 await _context.RefreshSessions.AddAsync(session);
                 await _context.SaveChangesAsync();
                 sessionId = session.Id;
+                sessionPublicId = session.PublicId;
+            }
+            else
+            {
+                sessionPublicId = await _context.RefreshSessions
+                    .Where(session => session.Id == sessionId.Value)
+                    .Select(session => session.PublicId)
+                    .SingleAsync();
             }
 
             var refreshToken = new RefreshToken
@@ -653,6 +665,7 @@ namespace ahis.template.identity.Services
             };
 
             await _context.RefreshTokens.AddAsync(refreshToken);
+            return sessionPublicId;
         }
 
         private async Task RevokeSessionAsync(int sessionId, DateTime revokedAt)

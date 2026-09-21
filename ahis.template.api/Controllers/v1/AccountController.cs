@@ -433,6 +433,22 @@ namespace ahis.template.api.Controllers.v1
             return NoContent();
         }
 
+        /// <summary>Lists active refresh sessions for the authenticated account.</summary>
+        /// <remarks>
+        /// Session identifiers are opaque. Device and location information are not collected or returned.
+        /// </remarks>
+        [HttpGet("sessions")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(typeof(PagedResponseDto<List<ActiveSessionResponseVM>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> GetActiveSessions([FromQuery] GetActiveSessionsQuery query)
+        {
+            var result = await _mediator.Send(query, HttpContext.RequestAborted);
+            return ToPagedActionResult(result);
+        }
+
         [HttpPost("2fa/reset-authenticator")]
         [Authorize]
         [EnableRateLimiting("AuthenticatedSecurityPolicy")]

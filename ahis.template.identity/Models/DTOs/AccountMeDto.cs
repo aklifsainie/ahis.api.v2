@@ -18,4 +18,13 @@ namespace ahis.template.identity.Models.DTOs
         public bool EmailConfirmed { get; init; }
         public bool TwoFactorEnabled { get; init; }
     }
+
+    public sealed class ActiveSessionDto
+    {
+        public Guid SessionId { get; init; }
+        public DateTime CreatedAt { get; init; }
+        public DateTime LastUsedAt { get; init; }
+        public DateTime ExpiresAt { get; init; }
+        public bool IsCurrent { get; init; }
+    }
 }

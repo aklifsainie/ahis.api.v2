@@ -29,6 +29,7 @@ public class AccountServiceTest
         };
         var userManager = CreateUserManager();
         userManager.Setup(manager => manager.FindByIdAsync(user.Id)).ReturnsAsync(user);
+        var context = new IdentityContext(new DbContextOptionsBuilder<IdentityContext>().Options);
         var service = new AccountService(
             userManager.Object,
             CreateSignInManager(userManager.Object).Object,
@@ -37,7 +38,8 @@ public class AccountServiceTest
             Mock.Of<ILogger<AccountService>>(),
             Mock.Of<IIdentityTokenStateService>(),
             Mock.Of<IAccountSecurityProofService>(),
-            new IdentityUnitOfWork(new IdentityContext(new DbContextOptionsBuilder<IdentityContext>().Options)));
+            new IdentityUnitOfWork(context),
+            context);
 
         var result = await service.GenerateAuthenticatorSetupAsync(user.Id);
 

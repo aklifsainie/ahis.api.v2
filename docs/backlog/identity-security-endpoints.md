@@ -117,13 +117,13 @@ Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.
 
 ### View active sessions
 
-- [ ] `GET /api/account/sessions`
-  - [ ] Return opaque session ID, creation time, last-used time, expiry, current-session indicator, and bounded device information.
-  - [ ] Never return raw or hashed refresh-token values.
-  - [ ] Return only sessions owned by the authenticated user.
-  - [ ] Define how approximate location or IP information is masked and retained, if collected.
+- [x] `GET /api/account/sessions` (2026-09-22)
+  - [x] Return opaque session ID, creation time, last-used time, expiry, and current-session indicator.
+  - [x] Never return raw or hashed refresh-token values.
+  - [x] Return only sessions owned by the authenticated user.
+  - [ ] Bounded device, IP, and location metadata remain deferred pending a product privacy and retention policy.
 
-Blocked by the refresh-token storage and session-model work in P0.
+Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) exposes the authenticated, rate-limited paginated endpoint. [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) projects active owner sessions from `IdentityContext` without token values. New access tokens carry the existing opaque session public ID so the current row can be identified; older access tokens have no current-session indicator until refreshed or replaced by a new login. [`GetActiveSessionsQueryHandlerTest`](../../ahis.template.test/TestFeatures/AccountFeature/GetActiveSessionsQueryHandlerTest.cs) covers principal routing, pagination bounds, response projection, and audit routing.
 
 ### Revoke one session
 
@@ -329,7 +329,7 @@ Add one row when an item moves beyond backlog status.
 | P0 existing endpoint hardening         | Implemented | Approved 2026-09-21 | 2026-09-21 | Password setup uses a 30-minute purpose-bound Identity token; diagnostics and account-state routes were removed; 2FA uses a five-minute protected challenge; refresh cookies are centralized; public authentication and recovery endpoints have partitioned limits; `RemoveApplicationUserRecoveryCodes` was generated and reviewed but not applied. |
 | Step-up authentication                 | Implemented | Approved 2026-09-21 | 2026-09-21 | Five-minute proof bound to the user and current security version                                                                                                                                                                                                                                                                                                                                        |
 | Revoke every session                   | Implemented | Approved 2026-09-22 | 2026-09-22 | [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) revokes the authenticated user's current and other sessions with a step-up proof; the Identity security version invalidates access tokens and proofs. EF Core references were aligned to `8.0.22` after a mixed-version runtime failure. Focused tests (2) and the full suite (16) passed; relational concurrency verification remains pending. |
-| View active sessions                   | Blocked     | —                   | —          | Requires P0 session model                                                                                                                                                                                                                                                                                                                                                                               |
+| View active sessions                   | Implemented (metadata deferred) | Approved 2026-09-22 | 2026-09-22 | Authenticated, paginated owner-only listing of active sessions; access-token session claim identifies the current row. Device, IP, and location collection remain deferred pending privacy and retention policy. |
 | Revoke one session                     | Blocked     | —                   | —          | Requires active-session support                                                                                                                                                                                                                                                                                                                                                                         |
 | Security summary                       | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Regenerate recovery codes              | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
