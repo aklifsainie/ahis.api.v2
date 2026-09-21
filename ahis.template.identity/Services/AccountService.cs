@@ -226,11 +226,27 @@ namespace ahis.template.identity.Services
                 {
                     return Result.Fail<AuthenticatorSetupDto>("User not found.");
                 }
-                    
+
+                if (user.TwoFactorEnabled)
+                {
+                    return Result.Fail<AuthenticatorSetupDto>(
+                        "Two-factor authentication is already enabled. Use an approved authenticator reset flow.");
+                }
 
                 // Reset authenticator key (so QR code is generated fresh)
-                await _userManager.ResetAuthenticatorKeyAsync(user);
+                var resetResult = await _userManager.ResetAuthenticatorKeyAsync(user);
+                if (!resetResult.Succeeded)
+                {
+                    _logger.LogWarning("Failed to reset authenticator key for user {UserId}", userId);
+                    return Result.Fail<AuthenticatorSetupDto>("Failed to generate authenticator setup.");
+                }
+
                 var key = await _userManager.GetAuthenticatorKeyAsync(user);
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    _logger.LogWarning("Authenticator key was not available after reset for user {UserId}", userId);
+                    return Result.Fail<AuthenticatorSetupDto>("Failed to generate authenticator setup.");
+                }
 
                 // Build otpauth URI
                 var issuer = _configuration["Identity:Issuer"] ?? _configuration["AppSettings:AppName"] ?? "AHIS";
@@ -240,7 +256,12 @@ namespace ahis.template.identity.Services
                 // Save values (do not enable 2FA yet)
                 user.AuthenticatorKey = key;
                 user.AuthenticatorUri = uri;
-                await _userManager.UpdateAsync(user);
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                {
+                    _logger.LogWarning("Failed to save authenticator setup for user {UserId}", userId);
+                    return Result.Fail<AuthenticatorSetupDto>("Failed to generate authenticator setup.");
+                }
 
                 return Result.Ok(new AuthenticatorSetupDto { Key = key, ProvisionUri = uri });
             }

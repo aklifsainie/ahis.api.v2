@@ -8,7 +8,7 @@ Account owns registration, email confirmation, initial and changed passwords, pr
 
 - Registration creates an active, non-deleted user without a password and attempts confirmation email delivery; email delivery is not transactional with user creation.
 - Valid confirmation sets Identity email confirmation and `EmailVerifiedAt` in UTC. Initial-password setup refuses an account that already has a password.
-- Profile update requests mark the account configured. Authenticator setup resets a key without enabling 2FA; successful enable verifies a code, enables 2FA, and creates recovery codes.
+- Profile update requests mark the account configured. Authenticator setup is available only before 2FA is enabled; it resets a key without enabling 2FA. ASP.NET Core Identity rotates the security stamp during that reset, so the bearer used for setup no longer validates afterward. Successful enable verifies a code, enables 2FA, and creates recovery codes.
 - Password changes and authenticator disable now rotate the Identity security stamp and revoke refresh tokens; bearer validation checks a stamp-derived version.
 
 ## Risks and evidence boundaries

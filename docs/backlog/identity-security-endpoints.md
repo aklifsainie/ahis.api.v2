@@ -80,6 +80,7 @@ Current evidence: `RefreshToken` stores the raw token with an integer ID, user I
 ### Existing endpoint hardening
 
 - [ ] Replace public initial-password setup by user ID with a one-time, expiring, purpose-bound setup token.
+- [x] Prevent authenticator-key replacement when MFA is already enabled, and fail safely when Identity key reset, key retrieval, or setup persistence fails.
 - [ ] Remove token encode/decode diagnostic endpoints from production, or restrict them with a dedicated diagnostic policy and environment check.
 - [ ] Bind two-factor login completion to an opaque, short-lived pre-authentication challenge instead of trusting a freely supplied user ID.
 - [ ] Make forgot-password, resend-confirmation, and account-state responses consistently resistant to user enumeration.
@@ -321,7 +322,7 @@ Add one row when an item moves beyond backlog status.
 
 | Item | Status | Blueprint | Completed | Evidence/notes |
 |---|---|---|---|---|
-| P0 token and account-state enforcement | Implemented; future-flow hooks pending | Approved 2026-09-21 | 2026-09-21 | `AddRefreshTokenSecurityVersion` generated and user-reported as applied; MFA reset, email change, and deactivation do not yet exist |
+| P0 token and account-state enforcement | Implemented; future-flow hooks pending | Approved 2026-09-21 | 2026-09-21 | `AddRefreshTokenSecurityVersion` generated and user-reported as applied; authenticator setup guard and failure handling completed in [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) with focused coverage in [`AccountServiceTest`](../../ahis.template.test/TestFeatures/AccountFeature/AccountServiceTest.cs); MFA reset, email change, and deactivation do not yet exist |
 | P0 refresh-token/session model | Backlog | — | — | — |
 | P0 existing endpoint hardening | Backlog | — | — | — |
 | Step-up authentication | Backlog | — | — | — |
