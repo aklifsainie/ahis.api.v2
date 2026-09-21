@@ -10,7 +10,7 @@ Account owns registration, email confirmation, initial and changed passwords, pr
 - Valid confirmation sets Identity email confirmation and `EmailVerifiedAt` in UTC, then sends a 30-minute, purpose-bound initial-password setup link to the configured public client URL. Setup validates the current security stamp, confirmed active account state, and absence of a password.
 - Profile update requests mark the account configured. Authenticator setup is available only before 2FA is enabled; it resets a key without enabling 2FA. ASP.NET Core Identity rotates the security stamp during that reset, so the bearer used for setup no longer validates afterward. Successful enable verifies a code, enables 2FA, and creates recovery codes.
 - Password changes and authenticator disable now rotate the Identity security stamp and revoke refresh tokens; bearer validation checks a stamp-derived version.
-- Re-authentication returns a five-minute proof bound to the current user and security version. MFA reset, confirmed email change, and deactivation require that proof and invalidate access and refresh tokens after their Identity changes commit.
+- Re-authentication returns a five-minute proof bound to the current user and security version. MFA reset, confirmed email change, deactivation, and session revocation require that proof. `POST /api/account/sessions/revoke-all` invalidates every refresh session, including the caller's, rotates the security version, clears the refresh cookie after commit, and requires a fresh login.
 - Email changes use Identity's change-email token and update the username only when it matched the previous email. Deactivation sets both inactive and soft-delete state; recovery has no self-service path.
 
 ## Risks and evidence boundaries

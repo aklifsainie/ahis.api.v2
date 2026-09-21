@@ -21,6 +21,12 @@ public sealed class ResetAuthenticatorCommand : IRequest<Result>
     public string StepUpProof { get; set; } = default!;
 }
 
+public sealed class RevokeAllSessionsCommand : IRequest<Result>
+{
+    [Required]
+    public string StepUpProof { get; set; } = default!;
+}
+
 public sealed class RequestEmailChangeCommand : IRequest<Result>
 {
     [Required, EmailAddress]
@@ -98,6 +104,38 @@ public sealed class ResetAuthenticatorCommandHandler : IRequestHandler<ResetAuth
         var result = await _accountService.ResetAuthenticatorAsync(_currentUser.UserId, request.StepUpProof, cancellationToken);
         if (result.IsSuccess)
             await _auditLogger.LogAsync(AuditActionEnum.Update, "AccountSecurity", _currentUser.UserId, "AuthenticatorReset", cancellationToken: cancellationToken);
+        return result;
+    }
+}
+
+public sealed class RevokeAllSessionsCommandHandler : IRequestHandler<RevokeAllSessionsCommand, Result>
+{
+    private readonly IAccountService _accountService;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IAuditLogger _auditLogger;
+
+    public RevokeAllSessionsCommandHandler(IAccountService accountService, ICurrentUserService currentUser, IAuditLogger auditLogger)
+    {
+        _accountService = accountService;
+        _currentUser = currentUser;
+        _auditLogger = auditLogger;
+    }
+
+    public async Task<Result> Handle(RevokeAllSessionsCommand request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_currentUser.UserId))
+            return Result.Fail("Unable to revoke sessions.");
+
+        var result = await _accountService.RevokeAllSessionsAsync(
+            _currentUser.UserId,
+            request.StepUpProof,
+            cancellationToken);
+        await _auditLogger.LogAsync(
+            result.IsSuccess ? AuditActionEnum.Logout : AuditActionEnum.LoginFailed,
+            "AccountSecurity",
+            _currentUser.UserId,
+            result.IsSuccess ? "AllSessionsRevoked" : "AllSessionsRevocationFailed",
+            cancellationToken: cancellationToken);
         return result;
     }
 }

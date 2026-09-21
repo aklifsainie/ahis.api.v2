@@ -460,6 +460,40 @@ namespace ahis.template.identity.Services
             return await _securityProof.CreateAsync(user, cancellationToken);
         }
 
+        public async Task<Result> RevokeAllSessionsAsync(
+            string userId,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user) ||
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail("Unable to revoke sessions.");
+            }
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var invalidation = await _tokenState.InvalidateAsync(user!, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return OperationalSessionRevocationFailure();
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(user!.Email, "Sessions revoked", "All sessions for your account were revoked. Sign in again to continue.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Session revocation failed for user {UserId}", userId);
+                return OperationalSessionRevocationFailure();
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
         public async Task<Result> ResetAuthenticatorAsync(
             string userId,
             string stepUpProof,
@@ -782,6 +816,10 @@ namespace ahis.template.identity.Services
                 _logger.LogError(ex, "Failed to send security notification {Subject}", subject);
             }
         }
+
+        private static Result OperationalSessionRevocationFailure() =>
+            Result.Fail(new Error("Unable to revoke sessions.")
+                .WithMetadata("OperationalFailure", true));
 
         private string BuildCallbackUrl(string baseUrl, string path, IDictionary<string, string> query)
         {

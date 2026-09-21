@@ -255,6 +255,15 @@ namespace ahis.template.identity.Services
                 var accessToken = await GenerateJwtTokenAsync(user!, securityVersion);
                 var (newRefreshToken, newRefreshExpiresAt) = GenerateRefreshToken();
 
+                var updatedSession = await _context.RefreshSessions
+                    .Where(session => session.Id == storedToken.SessionId && !session.IsRevoked)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(session => session.LastUsedAt, now)
+                        .SetProperty(session => session.ExpiresAt, newRefreshExpiresAt), cancellationToken);
+
+                if (updatedSession != 1)
+                    return Result.Fail("Invalid refresh token.");
+
                 await StoreRefreshTokenAsync(
                     user!.Id,
                     newRefreshToken,
@@ -262,12 +271,6 @@ namespace ahis.template.identity.Services
                     securityVersion,
                     storedToken.SessionId,
                     storedToken.Id);
-
-                await _context.RefreshSessions
-                    .Where(session => session.Id == storedToken.SessionId && !session.IsRevoked)
-                    .ExecuteUpdateAsync(setters => setters
-                        .SetProperty(session => session.LastUsedAt, now)
-                        .SetProperty(session => session.ExpiresAt, newRefreshExpiresAt), cancellationToken);
 
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
                 await _unitOfWork.CommitTransactionAsync(cancellationToken);

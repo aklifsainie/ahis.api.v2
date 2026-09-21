@@ -406,6 +406,33 @@ namespace ahis.template.api.Controllers.v1
             return Ok(new { stepUpProof = result.Value });
         }
 
+        /// <summary>Revokes every refresh session for the current account.</summary>
+        /// <remarks>
+        /// Requires a current five-minute step-up proof. The caller's session is included,
+        /// so the client must sign in again after this operation succeeds.
+        /// </remarks>
+        [HttpPost("sessions/revoke-all")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> RevokeAllSessions([FromBody] RevokeAllSessionsCommand command)
+        {
+            var result = await _mediator.Send(command, HttpContext.RequestAborted);
+            if (result.IsFailed)
+            {
+                if (result.Errors.Any(error => error.Metadata.ContainsKey("OperationalFailure")))
+                    return Problem(statusCode: StatusCodes.Status500InternalServerError);
+
+                return ToValidationProblem(result);
+            }
+
+            ClearRefreshCookie();
+            return NoContent();
+        }
+
         [HttpPost("2fa/reset-authenticator")]
         [Authorize]
         [EnableRateLimiting("AuthenticatedSecurityPolicy")]

@@ -6,7 +6,7 @@ This document tracks proposed security work for user identity, authentication, s
 
 This is a backlog, not an approved implementation blueprint. Any item that changes a public API, authorization, security behavior, Identity persistence, schema, dependencies, or production configuration requires an approved change blueprint before implementation.
 
-Last reviewed against source: 2026-09-21.
+Last reviewed against source: 2026-09-22.
 
 ## Ownership boundary
 
@@ -105,15 +105,15 @@ This is a dependency for session revocation, MFA reset, email change, and accoun
 
 ### Revoke every session
 
-- [ ] `POST /api/account/sessions/revoke-all`
-  - [ ] Derive the user ID only from the authenticated principal.
-  - [ ] Require a valid step-up proof.
-  - [ ] Revoke all refresh-token sessions atomically.
-  - [ ] Invalidate existing access tokens according to the approved token-version policy.
-  - [ ] Define whether the current session is retained; default recommendation is to revoke it.
-  - [ ] Clear the current refresh cookie when the current session is revoked.
+- [x] `POST /api/account/sessions/revoke-all` (2026-09-22)
+  - [x] Derive the user ID only from the authenticated principal.
+  - [x] Require a valid step-up proof.
+  - [x] Revoke all refresh-token sessions atomically.
+  - [x] Invalidate existing access tokens according to the approved token-version policy.
+  - [x] Revoke the current session.
+  - [x] Clear the current refresh cookie on success.
 
-The Identity service already has internal all-token revocation behavior, but no confirmed authenticated self-service endpoint exposes it.
+Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) exposes the authenticated, rate-limited endpoint. [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) validates the proof and uses `IIdentityTokenStateService.InvalidateAsync` inside an Identity transaction. [`RevokeAllSessionsCommandHandlerTest`](../../ahis.template.test/TestFeatures/AccountFeature/RevokeAllSessionsCommandHandlerTest.cs) covers current-principal routing and success auditing. The API and Infrastructure EF Core references were aligned to `8.0.22`, matching Identity, after a production `MissingMethodException` from mixed EF Core 8/9 `ExecuteUpdateAsync` signatures. Focused tests (2) and the full suite (16) passed; relational concurrency coverage remains unimplemented.
 
 ### View active sessions
 
@@ -328,7 +328,7 @@ Add one row when an item moves beyond backlog status.
 | P0 refresh-token/session model         | Implemented | Approved 2026-09-21 | 2026-09-21 | Hashed rotation lineage, replay invalidation, random public session IDs, lifecycle data, and bounded daily cleanup are implemented. `ReplaceRefreshTokensWithHashedSessionModel` was generated and source-reviewed; it was not applied. |
 | P0 existing endpoint hardening         | Implemented | Approved 2026-09-21 | 2026-09-21 | Password setup uses a 30-minute purpose-bound Identity token; diagnostics and account-state routes were removed; 2FA uses a five-minute protected challenge; refresh cookies are centralized; public authentication and recovery endpoints have partitioned limits; `RemoveApplicationUserRecoveryCodes` was generated and reviewed but not applied. |
 | Step-up authentication                 | Implemented | Approved 2026-09-21 | 2026-09-21 | Five-minute proof bound to the user and current security version                                                                                                                                                                                                                                                                                                                                        |
-| Revoke every session                   | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Revoke every session                   | Implemented | Approved 2026-09-22 | 2026-09-22 | [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) revokes the authenticated user's current and other sessions with a step-up proof; the Identity security version invalidates access tokens and proofs. EF Core references were aligned to `8.0.22` after a mixed-version runtime failure. Focused tests (2) and the full suite (16) passed; relational concurrency verification remains pending. |
 | View active sessions                   | Blocked     | —                   | —          | Requires P0 session model                                                                                                                                                                                                                                                                                                                                                                               |
 | Revoke one session                     | Blocked     | —                   | —          | Requires active-session support                                                                                                                                                                                                                                                                                                                                                                         |
 | Security summary                       | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
