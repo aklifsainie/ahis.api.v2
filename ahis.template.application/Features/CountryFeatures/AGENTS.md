@@ -1,33 +1,9 @@
 # Country Feature Instructions
 
-## Purpose and ownership
+Country owns reference-data CRUD for country names and ISO-style codes. It spans its Application feature, Domain entity/view model, Infrastructure repository/configuration/context, API controller, and handler tests.
 
-Country owns reference-data CRUD for country names and ISO-style codes. Its Application feature folder is the orchestration root, but the module spans Domain, Infrastructure, API, and tests.
+Use the custom mediator with `ICountryRepository` and `IUnitOfWork` for simple Country CRUD. Reads are no-tracking, repository queries exclude soft-deleted rows, handlers add active-state filtering, and reads attempt explicit audit logging. Mutations are automatically audited through the EF interceptor.
 
-## Owned code
+Before changing Country, inspect the closest controller action, command/query and validator, `ICountryRepository`, generic repository, configuration, `BaseEntity`, audit interceptor, and [the module guide](../../../docs/modules/country.md).
 
-- Entity/ViewModel: `ahis.template.domain/Models/Entities/Country.cs`, `Models/ViewModels/CountryVM/CountryVM.cs`
-- Application: this folder and `Interfaces/Repositories/ICountryRepository.cs`
-- Infrastructure: `Configurations/Entities/CountryConfiguration.cs`, `Repositories/CountryRepository.cs`, generic repository, `ApplicationDbContext`
-- API: `ahis.template.api/Controllers/v1/CountryController.cs`
-- Tests: `ahis.template.test/TestFeatures/CountryFeature`
-
-## Established flow
-
-Use custom CQRS handlers with direct `ICountryRepository` access; a Country service is not currently justified for single-record CRUD. Mutations save through `IUnitOfWork`. Reads are no-tracking, exclude soft-deleted records through the repository, add `IsActive`, project to `CountryVM`, and explicitly audit read activity.
-
-## Persistence and rules
-
-- `Country` inherits `BaseEntity` and implements `IAuditableEntity`.
-- Full name, alpha-2, alpha-3, and numeric ISO code are unique.
-- Normalize text by trimming and alpha codes by uppercasing before comparison/persistence.
-- Soft deletion sets both `IsDelete=true` and `IsActive=false`.
-- Do not physically delete Country unless a separately approved rule requires it.
-
-## Before modifying
-
-Read `docs/` in this folder, `CountryController`, all Country commands/queries, `ICountryRepository`, `GenericRepository`, `CountryConfiguration`, `BaseEntity`, the audit interceptor, and existing Country tests. Produce the repository-wide architectural blueprint and wait for approval.
-
-## Testing
-
-Cover success, invalid IDs/fields, uniqueness conflicts, inactive/deleted visibility, projection, sorting, auditing, and cancellation as applicable.
+Observed risks: Country permission policies are configured but not applied; unfiltered unique indexes keep soft-deleted values reserved while handler pre-checks exclude them; logical delete is audited as an EF update; explicit read-audit persistence is best-effort. Preserve these distinctions in any plan.

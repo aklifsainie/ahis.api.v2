@@ -1,20 +1,17 @@
 ---
 name: verify-solution
-description: Discover and run safe focused-to-broad build and test checks for this .NET solution, reporting warnings and failures without destructive database operations.
+description: Run safe focused-to-broad validation for AHIS API Template changes and report exact results without database, deployment, or external-system mutation.
 ---
 
 # Verify Solution
 
-Read root `AGENTS.md` and testing strategy. Inspect the solution/project paths and changed files to choose focused checks.
+Read root instructions and testing strategy. Inspect changed files and choose the narrowest meaningful checks first. Restore only when assets/packages require it; restore, build, and test create local outputs and may use the network.
 
-Preferred order:
+Preferred sequence:
 
-1. Restore only when dependencies/assets require it.
-2. Build the affected project with `--no-restore`.
-3. Run affected tests with `--no-build --no-restore` when the build output is current.
-4. Build `AhisApiTemplate.sln`.
-5. Test `AhisApiTemplate.sln`.
+1. Build the affected project with `--no-restore`.
+2. When relevant tests exist, build the affected test project before using `--no-build`, or run `dotnet test` without `--no-build` to avoid stale output.
+3. Build `AhisApiTemplate.sln --no-restore`.
+4. Run `dotnet test .\AhisApiTemplate.sln --no-build --no-restore`.
 
-Use the actual configuration needed by the task. Report commands, exit status, tests passed/failed/skipped, and relevant warnings. Separate pre-existing warnings from newly introduced ones when evidence permits.
-
-Do not run database updates, destructive cleanup, production services, or commands requiring live secrets. Migration verification may inspect/build generated code but must not apply it.
+The Country handler test is an example only; do not use it as focused validation for unrelated work. If no focused test exists, report the gap and continue with the applicable project/solution check. Report commands, exit codes, test totals, warnings, and environmental blockers. Distinguish pre-existing failures when evidence permits. Never run database updates, destructive cleanup, production services, or commands requiring live secrets.
