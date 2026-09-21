@@ -8,6 +8,7 @@ using FluentResults;
 using ahis.template.identity.Interfaces;
 using ahis.template.identity.Models.Entities;
 using ahis.template.identity.Models.DTOs;
+using ahis.template.identity.SharedKernel;
 
 
 namespace ahis.template.identity.Services
@@ -22,6 +23,8 @@ namespace ahis.template.identity.Services
         private readonly IConfiguration _configuration;
         private readonly ILogger<AccountService> _logger;
         private readonly IIdentityTokenStateService _tokenState;
+        private readonly IAccountSecurityProofService _securityProof;
+        private readonly IdentityUnitOfWork _unitOfWork;
 
         public AccountService(
             UserManager<ApplicationUser> userManager,
@@ -29,7 +32,9 @@ namespace ahis.template.identity.Services
             IEmailSender emailSender,
             IConfiguration configuration,
             ILogger<AccountService> logger,
-            IIdentityTokenStateService tokenState)
+            IIdentityTokenStateService tokenState,
+            IAccountSecurityProofService securityProof,
+            IdentityUnitOfWork unitOfWork)
         {
             _userManager = userManager;
             _signInManager = signInManager;
@@ -37,6 +42,8 @@ namespace ahis.template.identity.Services
             _configuration = configuration;
             _logger = logger;
             _tokenState = tokenState;
+            _securityProof = securityProof;
+            _unitOfWork = unitOfWork;
         }
 
         // 1. Register new user (no password yet)
@@ -376,6 +383,227 @@ namespace ahis.template.identity.Services
             return Result.Ok();
         }
 
+        public async Task<Result<string>> ReauthenticateAsync(
+            string userId,
+            string password,
+            string? twoFactorCode,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user) || string.IsNullOrWhiteSpace(password))
+                return Result.Fail<string>("Re-authentication failed.");
+
+            if (!await _userManager.CheckPasswordAsync(user!, password))
+                return Result.Fail<string>("Re-authentication failed.");
+
+            if (user!.TwoFactorEnabled)
+            {
+                if (string.IsNullOrWhiteSpace(twoFactorCode) ||
+                    !await _userManager.VerifyTwoFactorTokenAsync(
+                        user,
+                        _userManager.Options.Tokens.AuthenticatorTokenProvider,
+                        twoFactorCode))
+                {
+                    return Result.Fail<string>("Re-authentication failed.");
+                }
+            }
+
+            return await _securityProof.CreateAsync(user, cancellationToken);
+        }
+
+        public async Task<Result> ResetAuthenticatorAsync(
+            string userId,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null || !user.TwoFactorEnabled ||
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail("Unable to reset authenticator.");
+            }
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var disableResult = await _userManager.SetTwoFactorEnabledAsync(user, false);
+                var resetResult = disableResult.Succeeded
+                    ? await _userManager.ResetAuthenticatorKeyAsync(user)
+                    : IdentityResult.Failed();
+                if (!resetResult.Succeeded)
+                    return Result.Fail("Unable to reset authenticator.");
+
+                var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 0);
+                if (recoveryCodes is null)
+                    return Result.Fail("Unable to reset authenticator.");
+
+                user.AuthenticatorKey = null;
+                user.AuthenticatorUri = null;
+                user.RecoveryCodes = null;
+                user.TwoFactorEnabledAt = null;
+                user.UpdatedAt = DateTime.UtcNow;
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail("Unable to reset authenticator.");
+
+                var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return Result.Fail("Unable to reset authenticator.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(user.Email, "Authenticator reset", "Your authenticator was reset. Configure and verify a new authenticator before enabling two-factor authentication again.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Authenticator reset failed for user {UserId}", userId);
+                return Result.Fail("Unable to reset authenticator.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result> RequestEmailChangeAsync(
+            string userId,
+            string newEmail,
+            string callbackBaseUrl,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null || string.IsNullOrWhiteSpace(newEmail) || string.IsNullOrWhiteSpace(callbackBaseUrl) ||
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail("Unable to process email change.");
+            }
+
+            var existing = await _userManager.FindByEmailAsync(newEmail);
+            if (existing is not null && existing.Id != user.Id)
+                return Result.Fail("Unable to process email change.");
+
+            try
+            {
+                var token = await _userManager.GenerateChangeEmailTokenAsync(user, newEmail);
+                var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+                var callbackUrl = BuildCallbackUrl(callbackBaseUrl, "account/change-email/confirm", new Dictionary<string, string>
+                {
+                    ["userId"] = user.Id,
+                    ["newEmail"] = newEmail,
+                    ["token"] = encodedToken
+                });
+
+                await _emailSender.SendEmailAsync(
+                    newEmail,
+                    "Confirm your new email address",
+                    $"Confirm your new email address by <a href=\"{callbackUrl}\">clicking here</a>.");
+                await NotifySecurityChangeAsync(user.Email, "Email change requested", "A request was made to change the email address on your account.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Email change request failed for user {UserId}", userId);
+                return Result.Fail("Unable to process email change.");
+            }
+        }
+
+        public async Task<Result> ConfirmEmailChangeAsync(
+            string userId,
+            string newEmail,
+            string token,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(newEmail) || string.IsNullOrWhiteSpace(token))
+                return Result.Fail("Unable to confirm email change.");
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null)
+                return Result.Fail("Unable to confirm email change.");
+
+            try
+            {
+                var decodedToken = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(token));
+                var previousEmail = user.Email;
+                var userNameMatchesPreviousEmail = string.Equals(user.UserName, previousEmail, StringComparison.OrdinalIgnoreCase);
+
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var changeResult = await _userManager.ChangeEmailAsync(user, newEmail, decodedToken);
+                if (!changeResult.Succeeded)
+                    return Result.Fail("Unable to confirm email change.");
+
+                if (userNameMatchesPreviousEmail)
+                {
+                    var userNameResult = await _userManager.SetUserNameAsync(user, newEmail);
+                    if (!userNameResult.Succeeded)
+                        return Result.Fail("Unable to confirm email change.");
+                }
+
+                user.EmailVerifiedAt = DateTime.UtcNow;
+                user.UpdatedAt = DateTime.UtcNow;
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail("Unable to confirm email change.");
+
+                var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return Result.Fail("Unable to confirm email change.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(previousEmail, "Email address changed", "The email address on your account was changed.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Email change confirmation failed for user {UserId}", userId);
+                return Result.Fail("Unable to confirm email change.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result> DeactivateAsync(
+            string userId,
+            bool confirmation,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null || !confirmation || !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+                return Result.Fail("Unable to deactivate account.");
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                user.IsActive = false;
+                user.IsDeleted = true;
+                user.DeletedAt = DateTime.UtcNow;
+                user.UpdatedAt = DateTime.UtcNow;
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail("Unable to deactivate account.");
+
+                var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return Result.Fail("Unable to deactivate account.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(user.Email, "Account deactivated", "Your account was deactivated. Contact support if you need help with account recovery.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Account deactivation failed for user {UserId}", userId);
+                return Result.Fail("Unable to deactivate account.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
         public async Task<Result> ResendConfirmationEmailAsync(string email, string callbackBaseUrl, CancellationToken cancellationToken)
         {
             try
@@ -455,6 +683,21 @@ namespace ahis.template.identity.Services
 
 
         #region Helpers
+
+        private async Task NotifySecurityChangeAsync(string? email, string subject, string message)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+                return;
+
+            try
+            {
+                await _emailSender.SendEmailAsync(email, subject, message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send security notification {Subject}", subject);
+            }
+        }
 
         private string BuildCallbackUrl(string baseUrl, string path, IDictionary<string, string> query)
         {

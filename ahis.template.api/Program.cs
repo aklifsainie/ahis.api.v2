@@ -279,7 +279,9 @@ namespace ahis.template.api
                         var tokenState = context.HttpContext.RequestServices.GetRequiredService<IIdentityTokenStateService>();
                         var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
                         var version = context.Principal?.FindFirstValue(IIdentityTokenStateService.SecurityVersionClaim);
-                        if (!await tokenState.ValidateAsync(userId, version))
+                        var tokenUse = context.Principal?.FindFirstValue(IIdentityTokenStateService.TokenUseClaim);
+                        if (tokenUse != IIdentityTokenStateService.AccessTokenUse ||
+                            !await tokenState.ValidateAsync(userId, version))
                             context.Fail("Invalid bearer token");
                     }
                 };

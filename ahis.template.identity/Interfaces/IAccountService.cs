@@ -17,6 +17,11 @@ namespace ahis.template.identity.Interfaces
         Task<Result<IEnumerable<string>>> EnableAuthenticatorAsync(string userId, string verificationCode);
         Task<Result> DisableAuthenticatorAsync(string userId);
         Task<Result> ChangePasswordAsync(string userId, string currentPassword, string newPassword, CancellationToken cancellationToken);
+        Task<Result<string>> ReauthenticateAsync(string userId, string password, string? twoFactorCode, CancellationToken cancellationToken);
+        Task<Result> ResetAuthenticatorAsync(string userId, string stepUpProof, CancellationToken cancellationToken);
+        Task<Result> RequestEmailChangeAsync(string userId, string newEmail, string callbackBaseUrl, string stepUpProof, CancellationToken cancellationToken);
+        Task<Result> ConfirmEmailChangeAsync(string userId, string newEmail, string token, CancellationToken cancellationToken);
+        Task<Result> DeactivateAsync(string userId, bool confirmation, string stepUpProof, CancellationToken cancellationToken);
         Task<Result> ResendConfirmationEmailAsync(string email, string callbackBaseUrl, CancellationToken cancellationToken);
         Task<Result<AccountMeDto>> GetMyAccountAsync(string userId, CancellationToken cancellationToken);
     }

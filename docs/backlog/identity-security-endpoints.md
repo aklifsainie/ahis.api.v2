@@ -59,11 +59,11 @@ These should be addressed before exposing broader session-management or recovery
 - [x] Reject JWTs when the user is inactive or soft-deleted.
 - [x] Include a SecurityStamp-derived version in issued access tokens and validate it on authenticated requests.
 - [x] Make existing password change, password reset, MFA disable, and internal revoke-all/replay handling invalidate existing access tokens and refresh tokens.
-- [ ] Require the same invalidation in future MFA-reset, email-change, and account-deactivation workflows.
+- [x] Require the same invalidation in MFA-reset, email-change, and account-deactivation workflows.
 - [x] Apply the same active, deleted, lockout, and security-version checks during refresh-token rotation.
 - [x] Adopt immediate access-token revocation through per-request version validation.
 
-Implementation evidence (2026-09-21): bearer validation checks `IsActive`, `IsDeleted`, lockout, and a SecurityStamp-derived version. Refresh rotation applies the same checks. `RefreshTokens.SecurityVersion` was added by `AddRefreshTokenSecurityVersion`; existing refresh rows without a version fail closed. Migration application is user-reported and was not independently performed by Codex.
+Implementation evidence (2026-09-21): bearer validation checks `IsActive`, `IsDeleted`, lockout, an access-token-use claim, and a SecurityStamp-derived version. Refresh rotation applies the same account-state and version checks. MFA reset, confirmed email change, and account deactivation invoke `IIdentityTokenStateService.InvalidateAsync` after their Identity changes commit. `RefreshTokens.SecurityVersion` was added by `AddRefreshTokenSecurityVersion`; existing refresh rows without a version fail closed. Migration application is user-reported and was not independently performed by Codex.
 
 ### Refresh-token storage and session model
 
@@ -92,12 +92,12 @@ Current evidence: `RefreshToken` stores the raw token with an integer ID, user I
 
 ### Step-up authentication
 
-- [ ] `POST /api/account/re-authenticate`
-  - [ ] Require the current password.
-  - [ ] Require a second factor when MFA is enabled.
-  - [ ] Return a short-lived, purpose-constrained proof rather than a normal long-lived session.
-  - [ ] Define which sensitive operations require the proof and its maximum age.
-  - [ ] Rate-limit failures and audit successful and failed attempts without logging credentials or codes.
+- [x] `POST /api/account/re-authenticate`
+  - [x] Require the current password.
+  - [x] Require an authenticator code when MFA is enabled.
+  - [x] Return a five-minute `step-up` proof bound to the user and current security version.
+  - [x] Require the proof for MFA reset, email-change request, and deactivation.
+  - [x] Rate-limit requests and audit successful and failed attempts without logging credentials or codes.
 
 This is a dependency for session revocation, MFA reset, email change, and account deactivation.
 
@@ -152,37 +152,37 @@ Blocked by active-session listing and the P0 session model.
 
 ### Reset authenticator
 
-- [ ] `POST /api/account/2fa/reset-authenticator`
-  - [ ] Require a recent step-up proof or a separately approved recovery flow.
-  - [ ] Disable the existing authenticator and invalidate old recovery codes.
-  - [ ] Revoke other sessions and invalidate access tokens.
-  - [ ] Require the normal authenticator setup and verification flow before re-enabling MFA.
-  - [ ] Notify the user through a verified channel.
+- [x] `POST /api/account/2fa/reset-authenticator`
+  - [x] Require a recent step-up proof.
+  - [x] Disable the existing authenticator and invalidate old recovery codes.
+  - [x] Revoke refresh sessions and invalidate access tokens.
+  - [x] Require the normal authenticator setup and verification flow before re-enabling MFA.
+  - [x] Send a security notification to the account email.
 
 ### Verified email change
 
-- [ ] `POST /api/account/change-email/request`
-  - [ ] Require a recent step-up proof.
-  - [ ] Validate uniqueness without exposing whether another account owns the address.
-  - [ ] Generate an ASP.NET Core Identity change-email token.
-  - [ ] Send confirmation to the new address and a security notification to the old address.
-  - [ ] Do not change the current email until confirmation succeeds.
-- [ ] `POST /api/account/change-email/confirm`
-  - [ ] Consume a one-time, expiring, purpose-bound token.
-  - [ ] Update the normalized email through `UserManager`.
-  - [ ] Explicitly decide whether username changes when username currently matches email.
-  - [ ] Revoke sessions or update the token security version.
-  - [ ] Return a generic error for invalid, expired, or already-used tokens.
+- [x] `POST /api/account/change-email/request`
+  - [x] Require a recent step-up proof.
+  - [x] Validate uniqueness without exposing whether another account owns the address.
+  - [x] Generate an ASP.NET Core Identity change-email token.
+  - [x] Send confirmation to the new address and a security notification to the old address.
+  - [x] Do not change the current email until confirmation succeeds.
+- [x] `POST /api/account/change-email/confirm`
+  - [x] Consume a one-time, expiring, purpose-bound token.
+  - [x] Update the normalized email through `UserManager`.
+  - [x] Update username when it matched the previous email.
+  - [x] Revoke refresh sessions and invalidate access tokens.
+  - [x] Return a generic error for invalid, expired, or already-used tokens.
 
 ### Account deactivation
 
-- [ ] `POST /api/account/deactivate`
-  - [ ] Require a recent step-up proof and explicit confirmation.
-  - [ ] Use the existing inactive/soft-delete model according to an approved retention policy.
-  - [ ] Revoke all refresh sessions and invalidate access tokens.
-  - [ ] Prevent new login and refresh.
-  - [ ] Notify the user and record a security audit event.
-  - [ ] Decide whether deactivation is reversible and, if so, define the recovery path.
+- [x] `POST /api/account/deactivate`
+  - [x] Require a recent step-up proof and explicit confirmation.
+  - [x] Set the existing inactive and soft-delete state.
+  - [x] Revoke all refresh sessions and invalidate access tokens.
+  - [x] Prevent new login and refresh.
+  - [x] Send a security notification and record a security audit event.
+  - [x] Deactivation has no self-service reversal path; recovery requires support intervention.
 
 ## P2 — Account recovery
 
@@ -320,24 +320,24 @@ Apply this checklist to every selected endpoint:
 
 Add one row when an item moves beyond backlog status.
 
-| Item | Status | Blueprint | Completed | Evidence/notes |
-|---|---|---|---|---|
-| P0 token and account-state enforcement | Implemented; future-flow hooks pending | Approved 2026-09-21 | 2026-09-21 | `AddRefreshTokenSecurityVersion` generated and user-reported as applied; authenticator setup guard and failure handling completed in [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) with focused coverage in [`AccountServiceTest`](../../ahis.template.test/TestFeatures/AccountFeature/AccountServiceTest.cs); MFA reset, email change, and deactivation do not yet exist |
-| P0 refresh-token/session model | Backlog | — | — | — |
-| P0 existing endpoint hardening | Backlog | — | — | — |
-| Step-up authentication | Backlog | — | — | — |
-| Revoke every session | Backlog | — | — | — |
-| View active sessions | Blocked | — | — | Requires P0 session model |
-| Revoke one session | Blocked | — | — | Requires active-session support |
-| Security summary | Backlog | — | — | — |
-| Regenerate recovery codes | Backlog | — | — | — |
-| Reset authenticator | Backlog | — | — | — |
-| Verified email change | Backlog | — | — | — |
-| Account deactivation | Backlog | — | — | — |
-| Account recovery | Backlog | — | — | Requires approved recovery policy |
-| Administrative Identity controls | Backlog | — | — | Requires dedicated admin policy |
-| User role management | Blocked | — | — | Requires role model decisions and P0 token invalidation |
-| Passkey/WebAuthn support | Optional | — | — | Separate initiative |
+| Item                                   | Status      | Blueprint           | Completed  | Evidence/notes                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | ----------- | ------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0 token and account-state enforcement | Implemented | Approved 2026-09-21 | 2026-09-21 | `AddRefreshTokenSecurityVersion` generated and user-reported as applied; MFA reset, email change, and deactivation call [`InvalidateAsync`](../../ahis.template.identity/Services/IdentityTokenStateService.cs) after their Identity changes; step-up proof coverage is in [`AccountSecurityProofServiceTest`](../../ahis.template.test/TestFeatures/AccountFeature/AccountSecurityProofServiceTest.cs) |
+| P0 refresh-token/session model         | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
+| P0 existing endpoint hardening         | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Step-up authentication                 | Implemented | Approved 2026-09-21 | 2026-09-21 | Five-minute proof bound to the user and current security version                                                                                                                                                                                                                                                                                                                                        |
+| Revoke every session                   | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
+| View active sessions                   | Blocked     | —                   | —          | Requires P0 session model                                                                                                                                                                                                                                                                                                                                                                               |
+| Revoke one session                     | Blocked     | —                   | —          | Requires active-session support                                                                                                                                                                                                                                                                                                                                                                         |
+| Security summary                       | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Regenerate recovery codes              | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Reset authenticator                    | Implemented | Approved 2026-09-21 | 2026-09-21 | Requires step-up proof and invalidates credentials                                                                                                                                                                                                                                                                                                                                                      |
+| Verified email change                  | Implemented | Approved 2026-09-21 | 2026-09-21 | Uses Identity change-email token and invalidates credentials at confirmation                                                                                                                                                                                                                                                                                                                            |
+| Account deactivation                   | Implemented | Approved 2026-09-21 | 2026-09-21 | Inactive and soft-delete state with no self-service reversal                                                                                                                                                                                                                                                                                                                                            |
+| Account recovery                       | Backlog     | —                   | —          | Requires approved recovery policy                                                                                                                                                                                                                                                                                                                                                                       |
+| Administrative Identity controls       | Backlog     | —                   | —          | Requires dedicated admin policy                                                                                                                                                                                                                                                                                                                                                                         |
+| User role management                   | Blocked     | —                   | —          | Requires role model decisions and P0 token invalidation                                                                                                                                                                                                                                                                                                                                                 |
+| Passkey/WebAuthn support               | Optional    | —                   | —          | Separate initiative                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## Source observations behind this backlog
 

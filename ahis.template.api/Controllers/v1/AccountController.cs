@@ -386,6 +386,76 @@ namespace ahis.template.api.Controllers.v1
             return NoContent();
         }
 
+        [HttpPost("re-authenticate")]
+        [Authorize]
+        [EnableRateLimiting("AuthPolicy")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> Reauthenticate([FromBody] ReauthenticateCommand command)
+        {
+            var result = await _mediator.Send(command);
+            if (result.IsFailed)
+                return ToValidationProblem(result);
+
+            return Ok(new { stepUpProof = result.Value });
+        }
+
+        [HttpPost("2fa/reset-authenticator")]
+        [Authorize]
+        [EnableRateLimiting("AuthPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> ResetAuthenticator([FromBody] ResetAuthenticatorCommand command)
+        {
+            var result = await _mediator.Send(command);
+            if (result.IsFailed)
+                return ToValidationProblem(result);
+
+            ClearRefreshCookie();
+            return NoContent();
+        }
+
+        [HttpPost("change-email/request")]
+        [Authorize]
+        [EnableRateLimiting("AuthPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> RequestEmailChange([FromBody] RequestEmailChangeCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
+        }
+
+        [HttpPost("change-email/confirm")]
+        [AllowAnonymous]
+        [EnableRateLimiting("AuthPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> ConfirmEmailChange([FromBody] ConfirmEmailChangeCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
+        }
+
+        [HttpPost("deactivate")]
+        [Authorize]
+        [EnableRateLimiting("AuthPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> Deactivate([FromBody] DeactivateAccountCommand command)
+        {
+            var result = await _mediator.Send(command);
+            if (result.IsFailed)
+                return ToValidationProblem(result);
+
+            ClearRefreshCookie();
+            return NoContent();
+        }
+
 
         /// <summary>
         /// Resends the email confirmation link.
@@ -449,6 +519,37 @@ namespace ahis.template.api.Controllers.v1
                 return Unauthorized();
 
             return Ok(result.Value);
+        }
+
+        private IActionResult ToValidationProblem(Result result)
+        {
+            foreach (var error in result.Errors)
+                ModelState.AddModelError("general", error.Message);
+
+            return ValidationProblem(ModelState);
+        }
+
+        private IActionResult ToValidationProblem<T>(Result<T> result)
+        {
+            foreach (var error in result.Errors)
+                ModelState.AddModelError("general", error.Message);
+
+            return ValidationProblem(ModelState);
+        }
+
+        private void ClearRefreshCookie()
+        {
+            var options = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Expires = DateTime.UtcNow.AddDays(-1),
+                Path = "/"
+            };
+            Response.Cookies.Append("refresh_token", string.Empty, options);
+            options.Path = "/api/authentication/refresh";
+            Response.Cookies.Append("refresh_token", string.Empty, options);
         }
 
 

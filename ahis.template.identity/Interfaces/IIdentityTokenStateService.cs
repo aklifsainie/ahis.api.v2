@@ -6,6 +6,8 @@ namespace ahis.template.identity.Interfaces;
 public interface IIdentityTokenStateService
 {
     const string SecurityVersionClaim = "security_version";
+    const string TokenUseClaim = "token_use";
+    const string AccessTokenUse = "access";
 
     string? GetSecurityVersion(ApplicationUser user);
     bool IsEligible(ApplicationUser? user);

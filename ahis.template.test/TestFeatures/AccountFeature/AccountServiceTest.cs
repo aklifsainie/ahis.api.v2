@@ -1,11 +1,14 @@
 using ahis.template.identity.Interfaces;
+using ahis.template.identity.Contexts;
 using ahis.template.identity.Models.Entities;
 using ahis.template.identity.Services;
+using ahis.template.identity.SharedKernel;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.UI.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -32,7 +35,9 @@ public class AccountServiceTest
             Mock.Of<IEmailSender>(),
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<AccountService>>(),
-            Mock.Of<IIdentityTokenStateService>());
+            Mock.Of<IIdentityTokenStateService>(),
+            Mock.Of<IAccountSecurityProofService>(),
+            new IdentityUnitOfWork(new IdentityContext(new DbContextOptionsBuilder<IdentityContext>().Options)));
 
         var result = await service.GenerateAuthenticatorSetupAsync(user.Id);
 

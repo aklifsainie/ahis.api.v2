@@ -474,6 +474,7 @@ namespace ahis.template.identity.Services
             };
 
             claims.Add(new Claim(IIdentityTokenStateService.SecurityVersionClaim, securityVersion));
+            claims.Add(new Claim(IIdentityTokenStateService.TokenUseClaim, IIdentityTokenStateService.AccessTokenUse));
 
             // Add custom user claims,if any
             var userClaims = await _userManager.GetClaimsAsync(user);

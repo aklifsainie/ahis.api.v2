@@ -1,6 +1,6 @@
 # Authentication and Authorization
 
-JWT validation checks issuer, audience, lifetime, signing key, user existence, active/deleted state, lockout, and a SecurityStamp-derived version. Password login rejects inactive/deleted users and uses Identity lockout handling. Refresh rotation checks the same account state and stored security version. Legacy tokens without a version fail closed; deployment requires the planned Identity migration.
+JWT validation checks issuer, audience, lifetime, signing key, an access-token-use claim, user existence, active/deleted state, lockout, and a SecurityStamp-derived version. Password login rejects inactive/deleted users and uses Identity lockout handling. Refresh rotation checks the same account state and stored security version. Legacy tokens without a version or access-token-use claim fail closed; deployment requires the planned Identity migration.
 
 Refresh tokens are stored raw in `IdentityContext`. Successful refresh rotates a valid token; reuse of a revoked token revokes active tokens for that user; logout treats missing, invalid, expired, or revoked supplied tokens as a non-failing path. Cookie paths differ across login, refresh, 2FA, and logout, so inspect the entire flow before changing it.
 
