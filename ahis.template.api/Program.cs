@@ -5,12 +5,14 @@ using ahis.template.application.Interfaces.Services;
 using ahis.template.application.Services;
 using ahis.template.identity;
 using ahis.template.identity.Contexts;
+using ahis.template.identity.Services;
 using ahis.template.identity.Models.Entities;
 using ahis.template.identity.Interfaces;
 using ahis.template.infrastructure;
 using ahis.template.infrastructure.Contexts;
 using ahis.template.infrastructure.SharedKernel;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.AspNetCore.RateLimiting;
@@ -37,6 +39,7 @@ namespace ahis.template.api
             builder.Services.AddScoped<IEmailSender, EmailSender>();
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<UnitOfWork>();
+            builder.Services.AddHttpContextAccessor();
             builder.Services.AddHostedService<IdentitySessionCleanupHostedService>();
 
 
@@ -213,13 +216,40 @@ namespace ahis.template.api
         {
             services.AddRateLimiter(options =>
             {
-                // Strict: login endpoint
-                options.AddFixedWindowLimiter("AuthPolicy", limiter =>
-                {
-                    limiter.PermitLimit = 5; // 5 requests
-                    limiter.Window = TimeSpan.FromMinutes(1);
-                    limiter.QueueLimit = 0; // no queue for login
-                });
+                options.AddPolicy("AnonymousAuthPolicy", context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 5,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        }));
+
+                options.AddPolicy("AuthenticatedSecurityPolicy", context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                            ?? context.Connection.RemoteIpAddress?.ToString()
+                            ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 5,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        }));
+
+                options.AddPolicy("RefreshPolicy", context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 10,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        }));
 
                 // Normal API endpoint
                 options.AddSlidingWindowLimiter("ApiPolicy", limiter =>
@@ -325,7 +355,23 @@ namespace ahis.template.api
                 .AddRoles<IdentityRole>()
                 .AddEntityFrameworkStores<IdentityContext>()
                 .AddSignInManager()
-                .AddDefaultTokenProviders();
+                .AddDefaultTokenProviders()
+                .AddTokenProvider<InitialPasswordSetupTokenProvider>(InitialPasswordSetupTokenProvider.ProviderName);
+
+            services.Configure<InitialPasswordSetupTokenProviderOptions>(options =>
+            {
+                options.TokenLifespan = TimeSpan.FromMinutes(30);
+            });
+
+            services.Configure<CookieAuthenticationOptions>(IdentityConstants.TwoFactorUserIdScheme, options =>
+            {
+                options.ExpireTimeSpan = TimeSpan.FromMinutes(5);
+                options.SlidingExpiration = false;
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                options.Cookie.SameSite = SameSiteMode.Lax;
+                options.Cookie.Path = "/api/authentication";
+            });
 
             services.ConfigureApplicationCookie(options => { options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; }; });
         }

@@ -31,6 +31,7 @@ namespace ahis.template.identity.Services
         private readonly IConfiguration _configuration;
         private readonly ILogger<AuthenticationService> _logger;
         private readonly IIdentityTokenStateService _tokenState;
+        private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor _httpContextAccessor;
 
         public AuthenticationService(
             UserManager<ApplicationUser> userManager,
@@ -40,7 +41,8 @@ namespace ahis.template.identity.Services
             IdentityUnitOfWork unitOfWork,
             IConfiguration configuration,
             ILogger<AuthenticationService> logger,
-            IIdentityTokenStateService tokenState)
+            IIdentityTokenStateService tokenState,
+            Microsoft.AspNetCore.Http.IHttpContextAccessor httpContextAccessor)
         {
             _userManager = userManager;
             _signInManager = signInManager;
@@ -50,38 +52,8 @@ namespace ahis.template.identity.Services
             _configuration = configuration;
             _logger = logger;
             _tokenState = tokenState;
+            _httpContextAccessor = httpContextAccessor;
         }
-
-        public async Task<Result<AuthenticationResponseVM>> CheckAccountStateByEmailAsync(string userNameOrEmail)
-        {
-            if (string.IsNullOrWhiteSpace(userNameOrEmail))
-                return Result.Fail<AuthenticationResponseVM>("Invalid email.");
-
-            var user = await _userManager.FindByNameAsync(userNameOrEmail) ?? await _userManager.FindByEmailAsync(userNameOrEmail);
-            if (user == null)
-            {
-                // Prevent user enumeration attacks
-                return Result.Ok(new AuthenticationResponseVM
-                {
-                    IsEmailConfirmed = false,
-                    IsPasswordCreated = false,
-                    RequiresTwoFactor = false
-                });
-            }
-
-            var isEmailConfirmed = await _userManager.IsEmailConfirmedAsync(user);
-            var hasPassword = await _userManager.HasPasswordAsync(user);
-            var isTwoFactorEnabled = await _userManager.GetTwoFactorEnabledAsync(user);
-
-            return Result.Ok(new AuthenticationResponseVM
-            {
-                UserId = user.Id.ToString(),
-                IsEmailConfirmed = isEmailConfirmed,
-                IsPasswordCreated = hasPassword,
-                RequiresTwoFactor = isTwoFactorEnabled
-            });
-        }
-
 
         public async Task<Result<AuthenticationResponseVM>> LoginAsync(string userNameOrEmail, string password, bool rememberMe = false)
         {
@@ -109,10 +81,17 @@ namespace ahis.template.identity.Services
                         return Result.Fail<AuthenticationResponseVM>("User is locked out.");
 
                     if (signInResult.RequiresTwoFactor)
-                        return Result.Ok(new AuthenticationResponseVM { RequiresTwoFactor = true, UserId = user.Id.ToString() });
+                    {
+                        var challengeResult = await IssueTwoFactorChallengeAsync(user);
+                        return challengeResult.IsSuccess
+                            ? Result.Ok(new AuthenticationResponseVM { RequiresTwoFactor = true })
+                            : Result.Fail<AuthenticationResponseVM>("Login failed.");
+                    }
 
                     return Result.Fail<AuthenticationResponseVM>("Invalid credentials.");
                 }
+
+                await ClearIdentityApplicationCookieAsync();
 
                 // create tokens
                 var securityVersion = _tokenState.GetSecurityVersion(user);
@@ -312,17 +291,34 @@ namespace ahis.template.identity.Services
         }
 
 
-        public async Task<Result<AuthenticationResponseVM>> VerifyTwoFactorAsync(string userId, TwoFactorProviderEnum provider, string code, bool rememberMachine = false)
+        public async Task<Result<AuthenticationResponseVM>> VerifyTwoFactorAsync(TwoFactorProviderEnum provider, string code, bool rememberMachine = false)
         {
             try
             {
                 await _unitOfWork.BeginTransactionAsync();
-                var user = await _userManager.FindByIdAsync(userId);
-                if (user == null)
-                    return Result.Fail("User not found.");
+                var context = _httpContextAccessor.HttpContext;
+                if (context is null)
+                    return Result.Fail("Invalid or expired two-factor challenge.");
+
+                var challenge = await Microsoft.AspNetCore.Authentication.AuthenticationHttpContextExtensions.AuthenticateAsync(
+                    context,
+                    Microsoft.AspNetCore.Identity.IdentityConstants.TwoFactorUserIdScheme);
+                var challengeUserId = challenge.Principal?.FindFirstValue(ClaimTypes.Name);
+                var challengeVersion = challenge.Principal?.FindFirstValue(IIdentityTokenStateService.SecurityVersionClaim);
+                var user = await _signInManager.GetTwoFactorAuthenticationUserAsync();
+                if (user is null || string.IsNullOrWhiteSpace(challengeUserId) ||
+                    !string.Equals(challengeUserId, user.Id, StringComparison.Ordinal) ||
+                    !_tokenState.Matches(user, challengeVersion))
+                {
+                    await ClearTwoFactorChallengeAsync();
+                    return Result.Fail("Invalid or expired two-factor challenge.");
+                }
 
                 if (!_tokenState.IsEligible(user) || !user.TwoFactorEnabled)
+                {
+                    await ClearTwoFactorChallengeAsync();
                     return Result.Fail("Two-factor authentication is not enabled.");
+                }
 
                 SignInResult signInResult;
 
@@ -342,20 +338,20 @@ namespace ahis.template.identity.Services
                         break;
 
                     default:
+                        await ClearTwoFactorChallengeAsync();
                         return Result.Fail("Unsupported two-factor provider.");
                 }
 
                 if (signInResult.IsLockedOut)
+                {
+                    await ClearTwoFactorChallengeAsync();
                     return Result.Fail("Account is locked.");
+                }
 
                 if (!signInResult.Succeeded)
                     return Result.Fail("Invalid or expired verification code.");
 
-                // If recovery code is used → force regeneration later
-                if (provider == TwoFactorProviderEnum.RecoveryCode)
-                {
-                    // optional: mark flag, audit log, etc.
-                }
+                await ClearIdentityApplicationCookieAsync();
 
                 // Generate tokens
                 var securityVersion = _tokenState.GetSecurityVersion(user);
@@ -430,11 +426,9 @@ namespace ahis.template.identity.Services
 
             var user = await _userManager.FindByEmailAsync(email);
 
-            // Prevent user enumeration
-            if (user == null || !await _userManager.IsEmailConfirmedAsync(user))
-            {
-                return Result.Fail("Invalid email.");
-            }
+            // Public callers receive the same success result for every syntactically valid email.
+            if (user == null || !_tokenState.IsEligible(user) || !await _userManager.IsEmailConfirmedAsync(user))
+                return Result.Ok();
                 
 
             var token = await _userManager.GeneratePasswordResetTokenAsync(user);
@@ -445,11 +439,18 @@ namespace ahis.template.identity.Services
                 $"{callbackBaseUrl}/reset-password" +
                 $"?userId={user.Id}&token={encodedToken}";
 
-            await _emailSender.SendEmailAsync(
-                user.Email!,
-                "Reset your password",
-                $"Click the link to reset your password: {resetLink}"
-            );
+            try
+            {
+                await _emailSender.SendEmailAsync(
+                    user.Email!,
+                    "Reset your password",
+                    $"Click the link to reset your password: {resetLink}"
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Password reset email delivery failed.");
+            }
 
             return Result.Ok();
         }
@@ -495,6 +496,51 @@ namespace ahis.template.identity.Services
 
 
         #region Helpers
+
+        private async Task<Result> IssueTwoFactorChallengeAsync(ApplicationUser user)
+        {
+            var context = _httpContextAccessor.HttpContext;
+            var securityVersion = _tokenState.GetSecurityVersion(user);
+            if (context is null || securityVersion is null)
+                return Result.Fail("Unable to create two-factor challenge.");
+
+            var identity = new ClaimsIdentity(Microsoft.AspNetCore.Identity.IdentityConstants.TwoFactorUserIdScheme);
+            identity.AddClaim(new Claim(ClaimTypes.Name, user.Id));
+            identity.AddClaim(new Claim(IIdentityTokenStateService.SecurityVersionClaim, securityVersion));
+
+            await Microsoft.AspNetCore.Authentication.AuthenticationHttpContextExtensions.SignInAsync(
+                context,
+                Microsoft.AspNetCore.Identity.IdentityConstants.TwoFactorUserIdScheme,
+                new ClaimsPrincipal(identity),
+                new Microsoft.AspNetCore.Authentication.AuthenticationProperties
+                {
+                    IsPersistent = false,
+                    AllowRefresh = false,
+                    ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(5)
+                });
+
+            return Result.Ok();
+        }
+
+        private Task ClearTwoFactorChallengeAsync()
+        {
+            var context = _httpContextAccessor.HttpContext;
+            return context is null
+                ? Task.CompletedTask
+                : Microsoft.AspNetCore.Authentication.AuthenticationHttpContextExtensions.SignOutAsync(
+                    context,
+                    Microsoft.AspNetCore.Identity.IdentityConstants.TwoFactorUserIdScheme);
+        }
+
+        private Task ClearIdentityApplicationCookieAsync()
+        {
+            var context = _httpContextAccessor.HttpContext;
+            return context is null
+                ? Task.CompletedTask
+                : Microsoft.AspNetCore.Authentication.AuthenticationHttpContextExtensions.SignOutAsync(
+                    context,
+                    Microsoft.AspNetCore.Identity.IdentityConstants.ApplicationScheme);
+        }
 
         private async Task<string> GenerateJwtTokenAsync(ApplicationUser user, string securityVersion)
         {
@@ -615,20 +661,5 @@ namespace ahis.template.identity.Services
 
 
         #endregion
-
-
-        public JwtPayload DecodeToken(string token)
-        {
-            var handler = new JwtSecurityTokenHandler();
-            var jwtToken = handler.ReadJwtToken(token);
-            return jwtToken.Payload;
-        }
-
-        public IEnumerable<Claim> GetClaims(string token)
-        {
-            var handler = new JwtSecurityTokenHandler();
-            var jwtToken = handler.ReadJwtToken(token);
-            return jwtToken.Claims;
-        }
     }
 }

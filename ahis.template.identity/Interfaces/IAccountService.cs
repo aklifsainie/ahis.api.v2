@@ -10,8 +10,8 @@ namespace ahis.template.identity.Interfaces
     {
         Task<Result<string>> RegisterAsync(string email, string userName, string callbackBaseUrl);
         Task<Result> SendEmailConfirmationAsync(ApplicationUser user, string callbackBaseUrl);
-        Task<Result> ConfirmEmailAsync(string userId, string encodedToken);
-        Task<Result> SetPasswordFirstTimeAsync(string userId, string password);
+        Task<Result> ConfirmEmailAsync(string userId, string encodedToken, CancellationToken cancellationToken);
+        Task<Result> SetPasswordFirstTimeAsync(string userId, string token, string password, CancellationToken cancellationToken);
         Task<Result<ProfileUpdateDto>> UpdateProfileAsync(string userId, ProfileUpdateDto dto);
         Task<Result<AuthenticatorSetupDto>> GenerateAuthenticatorSetupAsync(string userId);
         Task<Result<IEnumerable<string>>> EnableAuthenticatorAsync(string userId, string verificationCode);

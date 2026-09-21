@@ -15,8 +15,6 @@ namespace ahis.template.application.Features.AccountFeatures.Commands
         [Required, EmailAddress]
         public string Email { get; set; }
 
-        [Required]
-        public string CallbackBaseUrl { get; set; }
     }
 
 
@@ -31,14 +29,8 @@ namespace ahis.template.application.Features.AccountFeatures.Commands
 
         public async Task<Result> Handle(ResendConfirmationEmailCommand request, CancellationToken cancellationToken)
         {
-            var result = await _accountService.ResendConfirmationEmailAsync(request.Email, request.CallbackBaseUrl, cancellationToken);
-
-            if (result.IsFailed)
-            {
-                Result.Fail(result.Errors);
-            }
-
-            return result;
+            await _accountService.ResendConfirmationEmailAsync(request.Email, string.Empty, cancellationToken);
+            return Result.Ok();
         }
     }
 }

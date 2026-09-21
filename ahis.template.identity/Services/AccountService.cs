@@ -98,11 +98,18 @@ namespace ahis.template.identity.Services
         {
             try
             {
+                var configuredCallbackBaseUrl = _configuration["Identity:PublicClientBaseUrl"];
+                if (string.IsNullOrWhiteSpace(configuredCallbackBaseUrl))
+                {
+                    _logger.LogError("Confirmation email cannot be resent because Identity:PublicClientBaseUrl is not configured.");
+                    return Result.Ok();
+                }
+
                 var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
                 var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
 
                 // build callback url: e.g. {callbackBaseUrl}/api/account/confirm-email?userId={userId}&token={token}
-                var callbackUrl = BuildCallbackUrl(callbackBaseUrl, "account/confirm-email", new Dictionary<string, string>
+                var callbackUrl = BuildCallbackUrl(configuredCallbackBaseUrl, "account/confirm-email", new Dictionary<string, string>
                 {
                     ["userId"] = user.Id.ToString(),
                     ["token"] = encodedToken
@@ -125,7 +132,7 @@ namespace ahis.template.identity.Services
         }
 
         // 3. Confirm email
-        public async Task<Result> ConfirmEmailAsync(string userId, string encodedToken)
+        public async Task<Result> ConfirmEmailAsync(string userId, string encodedToken, CancellationToken cancellationToken)
         {
             try
             {
@@ -144,7 +151,13 @@ namespace ahis.template.identity.Services
                 }
 
                 user.EmailVerifiedAt = DateTime.UtcNow;
-                await _userManager.UpdateAsync(user);
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail("Unable to confirm email.");
+
+                var setupResult = await SendInitialPasswordSetupEmailAsync(user, cancellationToken);
+                if (!setupResult.IsSuccess)
+                    return Result.Fail("Email was confirmed, but the password setup email could not be sent.");
 
                 return Result.Ok();
             }
@@ -156,18 +169,31 @@ namespace ahis.template.identity.Services
         }
 
         // 4. Set password on first login (user has no password yet)
-        public async Task<Result> SetPasswordFirstTimeAsync(string userId, string password)
+        public async Task<Result> SetPasswordFirstTimeAsync(
+            string userId,
+            string token,
+            string password,
+            CancellationToken cancellationToken)
         {
             try
             {
                 var user = await _userManager.FindByIdAsync(userId);
-                if (user == null)
-                    return Result.Fail("User not found.");
+                if (!_tokenState.IsEligible(user) || user is null || !user.EmailConfirmed)
+                    return Result.Fail("Invalid or expired password setup link.");
+
+                var decodedToken = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(token));
+                var isValidToken = await _userManager.VerifyUserTokenAsync(
+                    user,
+                    InitialPasswordSetupTokenProvider.ProviderName,
+                    InitialPasswordSetupTokenProvider.Purpose,
+                    decodedToken);
+                if (!isValidToken)
+                    return Result.Fail("Invalid or expired password setup link.");
 
                 // If user already has password, prevent using this method
                 var hasPassword = await _userManager.HasPasswordAsync(user);
                 if (hasPassword)
-                    return Result.Fail("Password already set. Use change password flow.");
+                    return Result.Fail("Invalid or expired password setup link.");
 
                 var addPasswordResult = await _userManager.AddPasswordAsync(user, password);
                 if (!addPasswordResult.Succeeded)
@@ -178,6 +204,10 @@ namespace ahis.template.identity.Services
                 }
 
                 return Result.Ok();
+            }
+            catch (FormatException)
+            {
+                return Result.Fail("Invalid or expired password setup link.");
             }
             catch (Exception ex)
             {
@@ -293,17 +323,28 @@ namespace ahis.template.identity.Services
                 if (!isValid)
                     return Result.Fail<IEnumerable<string>>("Invalid verification code.");
 
+                if (user.TwoFactorEnabled)
+                    return Result.Fail<IEnumerable<string>>("Two-factor authentication is already enabled.");
+
+                await _unitOfWork.BeginTransactionAsync();
+
                 // Enable two factor for user
-                await _userManager.SetTwoFactorEnabledAsync(user, true);
+                var enableResult = await _userManager.SetTwoFactorEnabledAsync(user, true);
+                if (!enableResult.Succeeded)
+                    return Result.Fail<IEnumerable<string>>("Failed to enable two-factor authentication.");
                 user.TwoFactorEnabledAt = DateTime.UtcNow;
 
                 // Generate recovery codes
                 var recovery = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
-                var codes = recovery.ToArray();
+                var codes = recovery?.ToArray() ?? Array.Empty<string>();
+                if (codes.Length != 10)
+                    return Result.Fail<IEnumerable<string>>("Failed to generate recovery codes.");
 
-                // Persist recovery codes securely (we store as JSON string here). In production consider encrypting.
-                user.RecoveryCodes = System.Text.Json.JsonSerializer.Serialize(codes);
-                await _userManager.UpdateAsync(user);
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail<IEnumerable<string>>("Failed to enable two-factor authentication.");
+
+                await _unitOfWork.CommitTransactionAsync();
 
                 return Result.Ok(codes.AsEnumerable());
             }
@@ -311,6 +352,10 @@ namespace ahis.template.identity.Services
             {
                 _logger.LogError(ex, "EnableAuthenticatorAsync error");
                 return Result.Fail<IEnumerable<string>>("Failed to enable authenticator.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
             }
         }
 
@@ -322,10 +367,14 @@ namespace ahis.template.identity.Services
                 if (user == null)
                     return Result.Fail("User not found.");
 
-                await _userManager.SetTwoFactorEnabledAsync(user, false);
+                var disableResult = await _userManager.SetTwoFactorEnabledAsync(user, false);
+                if (!disableResult.Succeeded)
+                    return Result.Fail("Failed to disable authenticator.");
+                var clearCodesResult = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 0);
+                if (clearCodesResult is null)
+                    return Result.Fail("Failed to disable authenticator.");
                 user.AuthenticatorKey = null;
                 user.AuthenticatorUri = null;
-                user.RecoveryCodes = null;
                 user.TwoFactorEnabledAt = null;
 
                 var update = await _userManager.UpdateAsync(user);
@@ -439,7 +488,6 @@ namespace ahis.template.identity.Services
 
                 user.AuthenticatorKey = null;
                 user.AuthenticatorUri = null;
-                user.RecoveryCodes = null;
                 user.TwoFactorEnabledAt = null;
                 user.UpdatedAt = DateTime.UtcNow;
                 var updateResult = await _userManager.UpdateAsync(user);
@@ -611,14 +659,13 @@ namespace ahis.template.identity.Services
                 var user = await _userManager.FindByEmailAsync(email);
 
 
-                if (user == null)
-                {
-                    return Result.Fail("Fail to re-send confirmation email");
-                }
-
+                if (user == null || !_tokenState.IsEligible(user))
+                    return Result.Ok();
 
                 if (user.EmailConfirmed)
                 {
+                    if (!await _userManager.HasPasswordAsync(user))
+                        await SendInitialPasswordSetupEmailAsync(user, cancellationToken);
                     return Result.Ok();
                 }
 
@@ -650,7 +697,7 @@ namespace ahis.template.identity.Services
                     "Failed to resend confirmation email for {Email}",
                     email);
 
-                return Result.Fail($"Failed to resend confirmation email for {email}");
+                return Result.Ok();
             }
         }
 
@@ -683,6 +730,43 @@ namespace ahis.template.identity.Services
 
 
         #region Helpers
+
+        private async Task<Result> SendInitialPasswordSetupEmailAsync(
+            ApplicationUser user,
+            CancellationToken cancellationToken)
+        {
+            var callbackBaseUrl = _configuration["Identity:PublicClientBaseUrl"];
+            if (string.IsNullOrWhiteSpace(callbackBaseUrl))
+            {
+                _logger.LogError("Initial password setup email cannot be sent because Identity:PublicClientBaseUrl is not configured.");
+                return Result.Fail("Password setup email is unavailable.");
+            }
+
+            var token = await _userManager.GenerateUserTokenAsync(
+                user,
+                InitialPasswordSetupTokenProvider.ProviderName,
+                InitialPasswordSetupTokenProvider.Purpose);
+            var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+            var callbackUrl = BuildCallbackUrl(callbackBaseUrl, "set-password", new Dictionary<string, string>
+            {
+                ["userId"] = user.Id,
+                ["token"] = encodedToken
+            });
+
+            try
+            {
+                await _emailSender.SendEmailAsync(
+                    user.Email!,
+                    "Set your password",
+                    $"Set your password by <a href=\"{callbackUrl}\">opening this secure link</a>.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send initial password setup email.");
+                return Result.Fail("Password setup email is unavailable.");
+            }
+        }
 
         private async Task NotifySecurityChangeAsync(string? email, string subject, string message)
         {

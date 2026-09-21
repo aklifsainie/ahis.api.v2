@@ -1,5 +1,6 @@
 ﻿using ahis.template.application.Features.AccountFeatures.Commands;
 using ahis.template.application.Features.AccountFeatures.Queries;
+using ahis.template.api.Security;
 using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
 using ahis.template.domain.Models.ViewModels.AccountVM;
@@ -35,6 +36,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="400">Invalid registration request</response>
         /// <response code="500">Unexpected internal server error</response>
         [HttpPost("register")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -77,6 +79,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="400">Invalid or expired confirmation token</response>
         /// <response code="500">Unexpected internal server error</response>
         [HttpPost("confirm-email")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -112,7 +115,7 @@ namespace ahis.template.api.Controllers.v1
         /// Set user password
         /// </summary>
         /// <remarks>
-        /// Allows the user to set a password after email verification.
+        /// Sets a password with the short-lived setup token sent after email confirmation.
         /// </remarks>
         /// <param name="command">Password setup data</param>
         /// <response code="204">Password set successfully with no response contents</response>
@@ -120,6 +123,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="401">Unauthorized</response>
         /// <response code="500">Unexpected internal server error</response>
         [HttpPost("set-password")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -210,6 +214,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         [Produces("application/json")]
         [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         public async Task<IActionResult> GenerateAuthenticatorSetup()
         {
             var result = await _mediator.Send(new GenerateAuthenticatorSetupCommand());
@@ -263,9 +268,7 @@ namespace ahis.template.api.Controllers.v1
         /// </ul>
         /// </remarks>
         /// <param name="command">
-        /// Payload containing:
-        /// <br/>• <c>UserId</c> – authenticated user's ID
-        /// <br/>• <c>VerificationCode</c> – 6-digit code from authenticator app
+        /// Payload containing a 6-digit authenticator verification code for the authenticated user.
         /// </param>
         /// <response code="200">Two-factor authentication enabled successfully</response>
         /// <response code="400">Invalid verification code or invalid request</response>
@@ -278,6 +281,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         [Produces("application/json")]
         [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         public async Task<IActionResult> EnableAuthenticator([FromBody] EnableTwoFactorCommand command)
         {
             var result = await _mediator.Send(command);
@@ -312,6 +316,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="500">Unexpected internal server error</response>
         [HttpPost("disable-2fa")]
         [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         public async Task<IActionResult> DisableAuthenticator()
         {
             var result = await _mediator.Send(new DisableTwoFactorCommand());
@@ -355,7 +360,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordCommand command)
         {
             var result = await _mediator.Send(
@@ -388,7 +393,7 @@ namespace ahis.template.api.Controllers.v1
 
         [HttpPost("re-authenticate")]
         [Authorize]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -403,7 +408,7 @@ namespace ahis.template.api.Controllers.v1
 
         [HttpPost("2fa/reset-authenticator")]
         [Authorize]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -419,7 +424,7 @@ namespace ahis.template.api.Controllers.v1
 
         [HttpPost("change-email/request")]
         [Authorize]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -431,7 +436,7 @@ namespace ahis.template.api.Controllers.v1
 
         [HttpPost("change-email/confirm")]
         [AllowAnonymous]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> ConfirmEmailChange([FromBody] ConfirmEmailChangeCommand command)
@@ -442,7 +447,7 @@ namespace ahis.template.api.Controllers.v1
 
         [HttpPost("deactivate")]
         [Authorize]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -465,11 +470,10 @@ namespace ahis.template.api.Controllers.v1
         /// - Response is always 204 to prevent user enumeration
         /// - Email is sent only if the account exists and is unconfirmed
         /// </remarks>
-        [Authorize]
         [HttpPost("resend-confirmation-email")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         public async Task<IActionResult> ResendConfirmationEmail([FromBody] ResendConfirmationEmailCommand command)
         {
             var result = await _mediator.Send(command);
@@ -539,17 +543,7 @@ namespace ahis.template.api.Controllers.v1
 
         private void ClearRefreshCookie()
         {
-            var options = new CookieOptions
-            {
-                HttpOnly = true,
-                Secure = true,
-                SameSite = SameSiteMode.Strict,
-                Expires = DateTime.UtcNow.AddDays(-1),
-                Path = "/"
-            };
-            Response.Cookies.Append("refresh_token", string.Empty, options);
-            options.Path = "/api/authentication/refresh";
-            Response.Cookies.Append("refresh_token", string.Empty, options);
+            RefreshCookie.Clear(Response);
         }
 
 

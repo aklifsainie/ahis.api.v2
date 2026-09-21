@@ -45,12 +45,6 @@ namespace ahis.template.identity.Models.Entities
         public string? AuthenticatorUri { get; set; }
 
         /// <summary>
-        /// Serialized recovery codes (e.g. JSON array or encrypted blob). Use a secure storage/encryption.
-        /// </summary>
-        [MaxLength(4000)]
-        public string? RecoveryCodes { get; set; }
-
-        /// <summary>
         /// Timestamp when two-factor authentication was enabled.
         /// </summary>
         public DateTime? TwoFactorEnabledAt { get; set; }

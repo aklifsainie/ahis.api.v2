@@ -7,7 +7,7 @@ Account owns registration, email confirmation, initial and changed passwords, pr
 ## Observed behavior
 
 - Registration creates an active, non-deleted user without a password and attempts confirmation email delivery; email delivery is not transactional with user creation.
-- Valid confirmation sets Identity email confirmation and `EmailVerifiedAt` in UTC. Initial-password setup refuses an account that already has a password.
+- Valid confirmation sets Identity email confirmation and `EmailVerifiedAt` in UTC, then sends a 30-minute, purpose-bound initial-password setup link to the configured public client URL. Setup validates the current security stamp, confirmed active account state, and absence of a password.
 - Profile update requests mark the account configured. Authenticator setup is available only before 2FA is enabled; it resets a key without enabling 2FA. ASP.NET Core Identity rotates the security stamp during that reset, so the bearer used for setup no longer validates afterward. Successful enable verifies a code, enables 2FA, and creates recovery codes.
 - Password changes and authenticator disable now rotate the Identity security stamp and revoke refresh tokens; bearer validation checks a stamp-derived version.
 - Re-authentication returns a five-minute proof bound to the current user and security version. MFA reset, confirmed email change, and deactivation require that proof and invalidate access and refresh tokens after their Identity changes commit.
@@ -15,6 +15,6 @@ Account owns registration, email confirmation, initial and changed passwords, pr
 
 ## Risks and evidence boundaries
 
-`set-password` is public and receives a user ID without observed caller binding. Disabling 2FA clears custom user fields but does not demonstrably reset all Identity token-store material. Repeated enable operations can issue fresh recovery codes. Callback base URLs are client supplied and form a security trust boundary.
+The initial password setup email requires `Identity:PublicClientBaseUrl` in deployment configuration. Existing registration callbacks are still client supplied and form a security trust boundary. The Identity migration that removes the legacy plaintext recovery-code column must be applied through the approved deployment process.
 
 These are source-derived observations, not owner-confirmed product requirements. See the local `AGENTS.md` and [security guidance](../architecture/authentication-authorization.md).

@@ -1,5 +1,6 @@
 ﻿using ahis.template.application.Interfaces.Services;
 using ahis.template.application.Shared.Mediator;
+using ahis.template.application.Interfaces.Commons;
 using ahis.template.domain.Enums;
 using ahis.template.domain.Models.ViewModels.AuthenticationVM;
 using ahis.template.identity.Interfaces;
@@ -13,8 +14,6 @@ namespace ahis.template.application.Features.AuthenticationFeatures.Commands
     /// </summary>
     public class VerifyTwoFactorLoginCommand : IRequest<Result<AuthenticationResponseVM>>
     {
-        public string UserId { get; set; } = default!;
-
         /// <summary>
         /// Two-factor provider (Authenticator or RecoveryCode)
         /// </summary>
@@ -35,25 +34,21 @@ namespace ahis.template.application.Features.AuthenticationFeatures.Commands
     public class VerifyTwoFactorLoginCommandHandler: IRequestHandler<VerifyTwoFactorLoginCommand, Result<AuthenticationResponseVM>>
     {
         private readonly IAuthenticationService _authenticationService;
-        private readonly ICurrentUserService _currentUserService;
+        private readonly IAuditLogger _auditLogger;
         private readonly ILogger<VerifyTwoFactorLoginCommandHandler> _logger;
 
-        public VerifyTwoFactorLoginCommandHandler(IAuthenticationService authenticationService, ICurrentUserService currentUserService, ILogger<VerifyTwoFactorLoginCommandHandler> logger)
+        public VerifyTwoFactorLoginCommandHandler(
+            IAuthenticationService authenticationService,
+            IAuditLogger auditLogger,
+            ILogger<VerifyTwoFactorLoginCommandHandler> logger)
         {
             _authenticationService = authenticationService;
-            _currentUserService = currentUserService;
+            _auditLogger = auditLogger;
             _logger = logger;
         }
 
         public async Task<Result<AuthenticationResponseVM>> Handle(VerifyTwoFactorLoginCommand request, CancellationToken cancellationToken)
         {
-            var userId = _currentUserService.UserId;
-
-            if (string.IsNullOrWhiteSpace(userId))
-            {
-                return Result.Fail("User is not authenticated.");
-            }
-
             if (string.IsNullOrWhiteSpace(request.Code))
             {
                 return Result.Fail("Verification code is required.");
@@ -62,15 +57,21 @@ namespace ahis.template.application.Features.AuthenticationFeatures.Commands
 
             try
             {
-                var result = await _authenticationService.VerifyTwoFactorAsync(userId, request.Provider, request.Code, request.RememberMachine);
+                var result = await _authenticationService.VerifyTwoFactorAsync(request.Provider, request.Code, request.RememberMachine);
+                await _auditLogger.LogAsync(
+                    result.IsSuccess ? AuditActionEnum.Login : AuditActionEnum.LoginFailed,
+                    "Authentication",
+                    result.IsSuccess ? result.Value.UserId : "pre-auth",
+                    result.IsSuccess ? "TwoFactorAuthentication" : "TwoFactorAuthenticationFailed",
+                    overrideUserId: result.IsSuccess ? result.Value.UserId : null,
+                    cancellationToken: cancellationToken);
                 return result;
             }
             catch (Exception ex)
             {
                 _logger.LogError(
                     ex,
-                    "2FA verification failed for user {UserId}",
-                    request.UserId);
+                    "2FA verification failed.");
 
                 return Result.Fail("Failed to verify two-factor authentication.");
             }
