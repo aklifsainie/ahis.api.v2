@@ -303,7 +303,7 @@ namespace ahis.template.identity.Services
                 var challenge = await Microsoft.AspNetCore.Authentication.AuthenticationHttpContextExtensions.AuthenticateAsync(
                     context,
                     Microsoft.AspNetCore.Identity.IdentityConstants.TwoFactorUserIdScheme);
-                var challengeUserId = challenge.Principal?.FindFirstValue(ClaimTypes.Name);
+                var challengeUserId = challenge.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
                 var challengeVersion = challenge.Principal?.FindFirstValue(IIdentityTokenStateService.SecurityVersionClaim);
                 var user = await _signInManager.GetTwoFactorAuthenticationUserAsync();
                 if (user is null || string.IsNullOrWhiteSpace(challengeUserId) ||
@@ -505,7 +505,9 @@ namespace ahis.template.identity.Services
                 return Result.Fail("Unable to create two-factor challenge.");
 
             var identity = new ClaimsIdentity(Microsoft.AspNetCore.Identity.IdentityConstants.TwoFactorUserIdScheme);
-            identity.AddClaim(new Claim(ClaimTypes.Name, user.Id));
+            // SignInManager.GetTwoFactorAuthenticationUserAsync reads the user ID
+            // from NameIdentifier when resolving the protected 2FA challenge.
+            identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, user.Id));
             identity.AddClaim(new Claim(IIdentityTokenStateService.SecurityVersionClaim, securityVersion));
 
             await Microsoft.AspNetCore.Authentication.AuthenticationHttpContextExtensions.SignInAsync(
