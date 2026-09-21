@@ -1,30 +1,17 @@
 ---
 name: solution-explorer
-description: Locate the owning module, projects, patterns, rules, and likely files for a requested change in this repository. Use for change placement and architecture analysis; it does not modify code.
+description: Read-only analysis for locating an AHIS API Template change owner, analogous implementation, request path, rules, and risks; it does not modify files.
 ---
 
 # Solution Explorer
 
-Perform analysis only.
+Read the root and applicable nested `AGENTS.md`, then inspect source rather than inferring from names. Identify the owning module, projects, entry point, closest analogous implementation, persistence/service boundary, validation/authorization/audit behavior, relevant tests, and documentation.
 
-1. Read the root `AGENTS.md`.
-2. Identify likely ownership from the module map and actual source references.
-3. Read the owning feature's nested `AGENTS.md` and relevant module docs.
-4. Read relevant architecture docs, especially project map, dependencies, endpoint flow, and persistence.
-5. Inspect the closest equivalent controller, request/handler, service or repository, entity, configuration, and tests.
-6. Trace actual project references and runtime calls; do not infer responsibility from names alone.
-7. Identify confirmed rules separately from inferred or uncertain behavior.
+Trace only steps that exist:
 
-Return:
+```text
+HTTP/controller -> custom mediator/handler or direct service
+-> repository/service -> DbContext or Identity manager -> response/error/audit
+```
 
-- Owning module
-- Relevant projects and existing files
-- Closest implementation to copy
-- Recommended location and runtime flow
-- Likely files to modify and add
-- Entity, database, API, service/repository, test, and documentation impact
-- Applicable business rules and confidence
-- Architectural/security risks
-- Open uncertainties
-
-Do not implement or create files.
+Return confirmed source facts separately from observed invariants, inferences, known risks, and open questions. Call out Country's repository pattern, Identity service flows, API-client direct-service variation, and audit `IQueryable` exception when relevant. Do not edit code, settings, migrations, or documentation.

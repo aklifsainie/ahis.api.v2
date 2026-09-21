@@ -1,103 +1,53 @@
-# Codex Operating Guide
+# AHIS API Template — Codex Guide
 
-## System overview
+## Scope and source of truth
 
-This .NET 8 Web API template provides account management, JWT and refresh-token authentication, authenticator-based 2FA, API-client/API-key authentication, country reference data, and audit logging. Existing source code is the authority. Preserve module-specific patterns and do not remodel the solution toward a preferred architecture.
+This is a .NET 8 ASP.NET Core Web API template for accounts, authentication, API-client keys, Country reference data, and auditing. Source code, project references, migrations, tests, and runtime configuration are authoritative; this guide routes work to the relevant evidence. Do not redesign the existing layered, feature-folder structure during unrelated work.
 
-## Technology stack
+## Solution map and dependencies
 
-- .NET 8 and ASP.NET Core Web API
-- ASP.NET Core Identity with JWT bearer authentication
-- EF Core with SQL Server (EF Core 9 in API/Infrastructure; EF Core 8 in Identity)
-- Custom `IMediator`/`IRequest`/`IRequestHandler` implementation; this repository does not use MediatR
-- FluentResults and FluentValidation
-- xUnit, Moq, FluentAssertions, and coverlet
-- Swagger/OpenAPI and ASP.NET Core rate limiting
+- `ahis.template.api`: executable composition root, controllers, authentication, authorization, rate limiting, and Swagger.
+- `ahis.template.application`: feature requests/handlers, contracts, custom mediator, validation, and results.
+- `ahis.template.domain`: shared entities, view models, enums, and `IUnitOfWork`.
+- `ahis.template.infrastructure`: application EF Core context, migrations, repositories, API-key implementation, and auditing.
+- `ahis.template.identity`: ASP.NET Core Identity entities, services, context, and migrations.
+- `ahis.template.test`: xUnit handler unit tests.
 
-## Solution map
+The actual graph is `API -> Application, Identity, Infrastructure`; `Infrastructure -> Application, Domain`; `Application -> Domain, Identity`; `Identity -> Domain`; and `Tests -> Application, Domain`. This is not strict Clean Architecture: Application consumes Identity contracts. See [project map](docs/architecture/project-map.md) and [dependency rules](docs/architecture/dependency-rules.md).
 
-- `ahis.template.api`: composition root, controllers, authentication handlers, authorization, Swagger, and rate limiting.
-- `ahis.template.application`: feature commands/queries/handlers, repository and service contracts, custom mediator, validation, results, and application services.
-- `ahis.template.domain`: shared entities, view models, enums, base entities, and `IUnitOfWork`.
-- `ahis.template.infrastructure`: `ApplicationDbContext`, EF configurations/migrations, repositories, audit persistence, and API-key implementations.
-- `ahis.template.identity`: ASP.NET Core Identity entities/services, `IdentityContext`, refresh-token persistence, and Identity migrations.
-- `ahis.template.test`: xUnit tests; currently focused on Country query handlers.
+## Modules and local guidance
 
-## Dependency rules
+- [Account](docs/modules/account.md): `ahis.template.application/Features/AccountFeatures`; read its `AGENTS.md`.
+- [Authentication](docs/modules/authentication.md): `ahis.template.application/Features/AuthenticationFeatures`; read its `AGENTS.md`.
+- [API-client authentication](docs/modules/api-client-authentication.md): `ahis.template.application/Features/ApiKeyAuthenticationFeatures`; read its `AGENTS.md`.
+- [Country](docs/modules/country.md): `ahis.template.application/Features/CountryFeatures`; read its `AGENTS.md`.
+- [Audit](docs/modules/audit.md): `ahis.template.application/Features/AuditLogFeatures`; read its `AGENTS.md` when that module is affected.
 
-The current dependency graph is intentional context, even where it differs from strict Clean Architecture:
+Use Country as the simple repository/unit-of-work pattern, Account and Authentication as Identity-service patterns, and API-client administration only as its documented direct-service variation. The audit query's `IQueryable`/EF execution in Application is an exception, not a default.
 
-```text
-API -> Application, Identity, Infrastructure
-Infrastructure -> Application, Domain
-Application -> Domain, Identity
-Identity -> Domain
-Tests -> Application, Domain
-```
+## Change planning and approval
 
-- Keep repository contracts in Application and application repository implementations in Infrastructure.
-- Keep Identity-specific EF/Identity behavior in the Identity project unless an existing feature demonstrates otherwise.
-- Controllers normally delegate to the custom mediator. API-client administration is an existing direct-service variation; inspect the affected module before choosing it.
-- Do not introduce MediatR or a new architectural framework without an approved architectural change.
+Use the relevant repository skill in `.agents/skills/`. The repository uses a risk-based blueprint gate:
 
-See `docs/architecture/dependency-rules.md` for detail.
+- Obtain explicit approval before changes to architecture, module boundaries, public APIs, business behavior, authorization or security, database schema or migrations, dependencies, external integrations, production configuration, or broad refactors.
+- Small local fixes, tests, and documentation changes may proceed when they are within the active authorized request and do not cross a risk boundary.
+- Stop and revise the blueprint when discovery reveals a material scope, contract, schema, security, dependency, or behavior change.
+- Never apply a migration, deploy, publish, push, or mutate an external system without separate explicit authorization.
 
-## Module map
+## Durable implementation and review rules
 
-- Account Management: `ahis.template.application/Features/AccountFeatures`; read its `AGENTS.md`.
-- Authentication: `ahis.template.application/Features/AuthenticationFeatures`; read its `AGENTS.md`.
-- API Client Authentication: `ahis.template.application/Features/ApiKeyAuthenticationFeatures`; read its `AGENTS.md`.
-- Country Reference Data: `ahis.template.application/Features/CountryFeatures`; read its `AGENTS.md`.
-- Audit logging is a cross-cutting concern documented in `docs/architecture/auditing.md`.
+- Use the repository's custom `IMediator`, `IRequest<TResponse>`, and `IRequestHandler<TRequest,TResponse>`—not MediatR.
+- Choose ownership from the closest module example. Keep application persistence contracts in Application and their implementations in Infrastructure; retain Identity workflows in the Identity service boundary.
+- Propagate cancellation where surrounding APIs support it. Use no-tracking reads and tracked mutations when following repository patterns.
+- Treat `BaseEntity.IsDelete` as soft deletion. Do not assume a configured policy is enforced: inspect the controller/action.
+- Never log or document passwords, raw access/refresh tokens, raw API keys outside their one-time creation response, signing keys, SMTP credentials, or unmasked sensitive audit values.
+- Treat implementation findings as observations unless an owner has confirmed them as requirements. Preserve known risks rather than copying them as conventions.
 
-## Default endpoint development workflow
+Read [endpoint flow](docs/architecture/endpoint-development-flow.md), [request flows](docs/architecture/request-lifecycle.md), [persistence](docs/architecture/persistence.md), [security](docs/architecture/authentication-authorization.md), [auditing](docs/architecture/auditing.md), [errors](docs/architecture/error-handling.md), and [review guidance](REVIEW.md) as applicable.
 
-Evaluate each step and skip it only when it does not apply:
+## Validation
 
-1. Create or modify the Domain entity.
-2. Create or modify the Infrastructure `IEntityTypeConfiguration<T>`.
-3. Create or modify the Domain ViewModel/response model when that matches the module.
-4. Create or extend the Application repository contract.
-5. Create or extend the Infrastructure repository implementation.
-6. Explicitly decide whether a service is necessary.
-7. Add the Application command/query and handler using the custom mediator.
-8. Create or modify the API controller.
-9. Add the endpoint with its route, authorization, result mapping, and cancellation behavior.
-10. Add or update tests.
-11. Run focused verification, then broader build/tests.
-
-Country is the primary repository-based example. Account and Authentication are service-based Identity examples. See `docs/architecture/endpoint-development-flow.md`.
-
-## Mandatory architectural approval gate
-
-Before creating or modifying implementation code:
-
-1. Read this file and every applicable nested `AGENTS.md`.
-2. Inspect an equivalent implementation and trace its dependencies.
-3. Produce an architectural blueprint naming the module, flow, service decision, business rules, database/API impact, tests, and exact files to add or modify.
-4. Wait for explicit user approval.
-5. Implement only after approval.
-
-The gate applies to implementation, schema, infrastructure, repository/service, business-rule, endpoint, module, and refactoring changes. It does not block read-only explanation, tracing, review, or diagnosis. If diagnosis leads to a proposed code fix, present the blueprint before editing.
-
-## Coding conventions
-
-- Use file-scoped behavior only when the surrounding module does; current code predominantly uses block namespaces.
-- Commands mutate state; queries read state. Commands/queries and handlers are commonly colocated in one file.
-- Requests implement the repository's custom `IRequest<TResponse>` and handlers implement its `IRequestHandler<TRequest,TResponse>`.
-- Use `FluentResults.Result`/`Result<T>` and the established typed errors where the module uses them.
-- Propagate `CancellationToken` through controller, mediator, repository, EF, and audit calls when APIs support it.
-- Use no-tracking queries for reads and tracked entities for updates.
-- `BaseEntity` records use `IsDelete` for soft deletion. Active lookup reads commonly require both non-deleted and `IsActive`.
-- Persist application changes through `IUnitOfWork` when following the Country/repository pattern.
-- Keep ViewModels in Domain where existing features do so; do not relocate them based on generic guidance.
-- Use UTC for persisted timestamps.
-- Do not log raw tokens, passwords, API keys, SMTP credentials, JWT signing keys, or other secrets.
-- Preserve current variations in routes, validation, and response mapping unless a separately approved refactor addresses them.
-
-## Build and test
-
-From the solution root:
+Run verification narrow to broad. The usual commands from the repository root are:
 
 ```powershell
 dotnet restore .\AhisApiTemplate.sln
@@ -105,18 +55,6 @@ dotnet build .\AhisApiTemplate.sln --no-restore
 dotnet test .\AhisApiTemplate.sln --no-build --no-restore
 ```
 
-Prefer the affected project and affected tests first. Never run `dotnet ef database update` or apply a migration to a database unless explicitly requested. Migration generation also requires an approved migration blueprint.
+Restore, build, and test can create caches and build outputs; report their results accurately. Never use `dotnet ef database update` as routine verification. See [testing strategy](docs/architecture/testing-strategy.md).
 
-## Documentation map
-
-- Architecture overview: `docs/architecture/solution-overview.md`
-- Projects and dependencies: `docs/architecture/project-map.md`, `dependency-rules.md`
-- Endpoint workflow and runtime traces: `endpoint-development-flow.md`, `request-lifecycle.md`
-- EF Core and migrations: `persistence.md`
-- Results and errors: `error-handling.md`
-- Security: `authentication-authorization.md`
-- Auditing: `auditing.md`
-- Tests: `testing-strategy.md`
-- Terms: `docs/glossary/business-terms.md`
-
-Update only documentation made inaccurate by an approved change. Mark inferred behavior as inferred rather than confirmed.
+Refresh this guidance when the dependency graph, a module boundary, persistence/security behavior, or the Codex operating model changes; otherwise review by 2027-03-21.

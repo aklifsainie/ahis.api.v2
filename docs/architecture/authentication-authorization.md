@@ -1,23 +1,11 @@
 # Authentication and Authorization
 
-## JWT bearer authentication
+JWT validation checks issuer, audience, lifetime, signing key, user existence, and lockout. Password login additionally rejects inactive/deleted users and uses Identity lockout handling. These are observed implementation behaviors: current JWT validation and refresh rotation do not re-check active/deleted status or security stamps, so do not claim that password/security-stamp updates invalidate existing sessions without a correction that enforces it.
 
-The API validates issuer, audience, lifetime, and signing key. `ApplicationUser` must still exist, and a locked-out user is rejected during token validation. JWTs include name identifier, username, email, standard JWT claims, custom user claims, and roles.
+Refresh tokens are stored raw in `IdentityContext`. Successful refresh rotates a valid token; reuse of a revoked token revokes active tokens for that user; logout treats missing, invalid, expired, or revoked supplied tokens as a non-failing path. Cookie paths differ across login, refresh, 2FA, and logout, so inspect the entire flow before changing it.
 
-Refresh tokens are persisted in `IdentityContext`. Successful refresh rotates the token. Reuse of a revoked token triggers revocation of all active refresh tokens for that user. Logout revokes the supplied usable refresh token and is idempotent at the command layer.
+API keys arrive in `X-API-Key`, are compared as SHA-256 hashes, and are eligible only when key and client status permit. Failures intentionally conceal the reason. Raw values are returned only during creation and must never be persisted or logged.
 
-## API-key authentication
+Configured policies are not necessarily applied. Country permission policies exist but are not attached to Country actions; API-client administration lacks explicit authorization; and audit queries require authentication but lack a dedicated role/permission policy. API-client `RateLimitPerMinute` is stored but not enforced. The public initial-password endpoint also needs explicit security review. These are risks, not patterns to reproduce.
 
-Clients send one `X-API-Key` header. The raw key is hashed with SHA-256 and compared with stored hashes. A key is valid only when it exists, is active, is not revoked or expired, and its client is active. Failure responses intentionally conceal the specific cause. Successful authentication adds client and permission claims and updates `LastUsedAt`.
-
-The raw key is returned only during key creation. Never persist or log it.
-
-## Authorization and rate limiting
-
-Country accepts Bearer or API-key authentication and has a global API rate-limit attribute. `CountryReadPolicy` and `CountryWritePolicy` exist in `Program.cs`, but are not currently applied to Country endpoints. API-client administration currently has no authorization attribute. Treat both as known security risks, not as conventions to copy.
-
-Authentication endpoints use the stricter `AuthPolicy` rate limiter selectively. API-client `RateLimitPerMinute` is stored but is not currently used to configure a per-client limiter.
-
-## Configuration safety
-
-Development settings currently contain plaintext operational secrets. Generated documentation and logs must name configuration keys only, never reproduce their values. Prefer environment variables, user secrets, or an approved secret store in future configuration work.
+Documentation and logs may name configuration keys but must never include secret values.

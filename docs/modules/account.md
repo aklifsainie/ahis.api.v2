@@ -1,0 +1,18 @@
+# Account Module
+
+## Ownership and flow
+
+Account owns registration, email confirmation, initial and changed passwords, profile, current-account view, and authenticator setup. `AccountController` dispatches custom mediator requests; handlers coordinate with `IAccountService`; the service uses ASP.NET Core Identity managers, `IdentityContext`, and SMTP where needed.
+
+## Observed behavior
+
+- Registration creates an active, non-deleted user without a password and attempts confirmation email delivery; email delivery is not transactional with user creation.
+- Valid confirmation sets Identity email confirmation and `EmailVerifiedAt` in UTC. Initial-password setup refuses an account that already has a password.
+- Profile update requests mark the account configured. Authenticator setup resets a key without enabling 2FA; successful enable verifies a code, enables 2FA, and creates recovery codes.
+- Password changes update the Identity security stamp. The current JWT/refresh design does not validate that stamp, so this is not session invalidation.
+
+## Risks and evidence boundaries
+
+`set-password` is public and receives a user ID without observed caller binding. Disabling 2FA clears custom user fields but does not demonstrably reset all Identity token-store material. Repeated enable operations can issue fresh recovery codes. Callback base URLs are client supplied and form a security trust boundary.
+
+These are source-derived observations, not owner-confirmed product requirements. See the local `AGENTS.md` and [security guidance](../architecture/authentication-authorization.md).

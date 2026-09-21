@@ -1,39 +1,11 @@
 # Persistence
 
-## Contexts
+`ApplicationDbContext` in Infrastructure owns Country, API-client, and audit data. It discovers entity configurations and installs `AuditSaveChangesInterceptor`. `IdentityContext` in Identity owns ASP.NET Core Identity data and `RefreshTokens`. Both use SQL Server and the same configured connection-string key, but have separate migration histories and snapshots.
 
-`ApplicationDbContext` in Infrastructure owns:
+`GenericRepository<T>` supports integer-key `BaseEntity` records; `GenericGuidRepository<T>` supports `BaseGuidEntity` records and exposes `IQueryable` for audit pagination. Generic reads normally filter `IsDelete`; Country handlers add `IsActive`. Repository-pattern mutations use `IUnitOfWork`; Identity services work through Identity managers/context/unit of work.
 
-- `Country`
-- `ApiClients`, `ApiClientKeys`, and `ApiClientPermissions`
-- `AuditLog`
+No global EF query filter is configured. Soft-deletion behavior is enforced by repository predicates, and Country's unfiltered unique indexes retain soft-deleted values. Treat the resulting pre-check/database conflict as an observed risk.
 
-It discovers `IEntityTypeConfiguration<T>` implementations and installs `AuditSaveChangesInterceptor`.
+Application migrations belong to `ahis.template.infrastructure/Migrations` with `ApplicationDbContext`; Identity migrations belong to `ahis.template.identity/Migrations` with `IdentityContext`. Generate migrations only through the repository migration skill and an approved migration blueprint. Never apply one without separately explicit authority.
 
-`IdentityContext` in Identity owns:
-
-- ASP.NET Core Identity users, roles, claims, logins, and tokens
-- `RefreshTokens`
-
-Both contexts use SQL Server and the same configured connection string, but have separate migrations and snapshots.
-
-## Repository and unit-of-work behavior
-
-- `GenericRepository<T>` supports `BaseEntity` integer-key records.
-- `GenericGuidRepository<T>` supports `BaseGuidEntity` records and exposes `GetQueryable` for audit pagination.
-- Generic reads normally exclude `IsDelete`; Country active reads add `IsActive` predicates.
-- Reads default to no tracking. Updates and soft deletes load tracked records.
-- Application mutations save through `IUnitOfWork` in the repository pattern.
-- Identity services use `IdentityContext`, Identity managers, and `IdentityUnitOfWork` directly.
-
-## Migrations
-
-Application migrations belong to `ahis.template.infrastructure/Migrations` with `ApplicationDbContext`. Identity migrations belong to `ahis.template.identity/Migrations` with `IdentityContext`. Before generating a migration, produce an approved migration blueprint naming context, startup project, entities, tables, columns, indexes, foreign keys, destructive risks, and migration name.
-
-Never apply a migration to a database without explicit instruction.
-
-## Known cautions
-
-- The initial Identity migration contains both default and renamed role-table artifacts; inspect the model snapshot and generated migration before future Identity migrations.
-- The audit interceptor records keys before save, while Country uses a database-generated integer key.
-- No global EF query filters are configured; repository predicates enforce soft deletion.
+Known observations: the initial Identity migration contains default and renamed role-table artifacts; Country's database-generated ID may be unavailable to the audit interceptor before save; and audit query pagination leaks EF work into Application.

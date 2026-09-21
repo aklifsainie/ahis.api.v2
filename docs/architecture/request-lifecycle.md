@@ -1,48 +1,32 @@
 # Request Lifecycle
 
-## Repository-based Country request
+## Country
 
 ```text
-HTTP request
-  -> CountryController
-  -> custom IMediator.Send
-  -> SimpleMediator validation and handler resolution
-  -> Country command/query handler
-  -> ICountryRepository
-  -> CountryRepository / GenericRepository
-  -> ApplicationDbContext
-  -> SQL Server
+CountryController -> custom IMediator -> command/query handler
+-> ICountryRepository -> CountryRepository / GenericRepository
+-> ApplicationDbContext -> SQL Server
 ```
 
-Mutations call `IUnitOfWork.SaveChangesAsync`. Reads use no tracking and may call `IAuditLogger` explicitly. Responses normally pass through `BaseApiController`, with create/delete status handling in the controller.
+Mutations save through `IUnitOfWork`; reads use no tracking, include active-state filtering in handlers, and attempt explicit view audits. The EF interceptor writes mutation audits with the application transaction.
 
-## Identity service request
+## Account and Authentication
 
 ```text
-HTTP request
-  -> AccountController or AuthenticationController
-  -> custom mediator
-  -> command/query handler
-  -> IAccountService or IAuthenticationService
-  -> UserManager / SignInManager / IdentityContext
-  -> SQL Server and, where applicable, SMTP
+AccountController or AuthenticationController -> custom mediator -> handler
+-> IAccountService or IAuthenticationService
+-> UserManager / SignInManager / IdentityContext / SMTP as applicable
 ```
 
-Identity services own multi-step workflows such as confirmation tokens, password operations, 2FA, JWT creation, refresh-token rotation, and transactions.
+Identity services own multi-step confirmation, password, 2FA, token, and refresh workflows. Inspect all related actions when a change affects cookies, current-user access, lockout, active/deleted state, or JWT validation.
 
-## API-client administration request
+## API client and audit
 
 ```text
-HTTP request
-  -> ApiClientController
-  -> IApiClientService
-  -> ApiClientService
-  -> ApplicationDbContext
-  -> SQL Server
+ApiClientController -> IApiClientService -> ApplicationDbContext
+
+AuditLogController -> custom mediator -> GetAuditLogQueryHandler
+-> IAuditLogRepository.GetQueryable() -> EF query in Application
 ```
 
-This is an existing variation: request types implement `IRequest<Result<T>>`, but there are no handlers and the controller calls the service directly. Do not copy the variation without explaining why it fits the requested change.
-
-## Audit-log query
-
-`AuditLogController` sends `GetAuditLogQuery` to a handler, which obtains an `IQueryable` from `IAuditLogRepository`, filters, orders, paginates, and projects to `AuditLogVM`.
+The first is a direct-service administrative variation. The second couples Application to EF query execution. Preserve them as explicit exceptions rather than copying either flow by default.

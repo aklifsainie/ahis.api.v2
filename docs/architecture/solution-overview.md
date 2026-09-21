@@ -1,29 +1,14 @@
 # Solution Overview
 
-## Purpose
+AHIS API Template is a .NET 8 Web API template for account configuration, JWT/refresh-token authentication, authenticator 2FA, external API-client keys, Country reference data, and auditing.
 
-The solution is a production-oriented .NET 8 Web API template centered on account and authentication capabilities. It includes account registration and configuration, JWT/refresh-token authentication, authenticator 2FA, external API-client keys, Country reference data, and audit logging.
-
-## Architectural shape
-
-The solution uses layers plus feature folders rather than a strict textbook architecture. Application features use CQRS-style requests and handlers dispatched by a repository-owned custom mediator. Persistence differs by area:
+It uses layers plus feature folders, not a strict textbook architecture. The custom mediator dispatches most Application requests and invokes registered FluentValidation validators. Persistence and orchestration vary by module:
 
 - Country uses Application repository contracts, Infrastructure repositories, and `IUnitOfWork`.
-- Account and Authentication handlers delegate to services in the Identity project.
-- API-client administration currently calls an Infrastructure service directly from its controller.
-- Audit querying uses a repository; audit writing uses an interceptor or explicit audit service.
+- Account and Authentication handlers delegate to Identity services.
+- API-client administration calls an Infrastructure service from its controller.
+- Audit queries execute EF operations in Application over an Infrastructure-provided `IQueryable`; automatic and explicit audit writes use different guarantees.
 
-Do not force these variations into one style during unrelated work. Select the closest established feature in the owning module and explain any proposed departure in the approval blueprint.
+The two SQL Server contexts use the same configuration key but own separate migrations: `ApplicationDbContext` owns Country, API-client, and audit data; `IdentityContext` owns ASP.NET Core Identity and refresh tokens. See [project map](project-map.md), [dependency rules](dependency-rules.md), and [request flows](request-lifecycle.md).
 
-## Runtime components
-
-- ASP.NET Core controllers expose HTTP endpoints.
-- JWT bearer and API-key handlers create authenticated principals.
-- The custom mediator locates request handlers and runs registered FluentValidation validators.
-- `ApplicationDbContext` persists Country, API-client, and audit data.
-- `IdentityContext` persists ASP.NET Core Identity data and refresh tokens.
-- Both contexts are configured against `ConnectionStrings:DefaultConnection`.
-
-## Source of truth
-
-Source code, project references, EF configurations, migrations, tests, and runtime configuration outrank these documents. Update the documentation when an approved architectural or business change makes it inaccurate.
+The code, project references, migrations, tests, and runtime configuration outrank this document. Module descriptions distinguish observed implementation behavior from owner-confirmed requirements.
