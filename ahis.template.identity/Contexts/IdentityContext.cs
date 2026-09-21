@@ -12,6 +12,7 @@ namespace ahis.template.identity.Contexts
         }
 
         public DbSet<RefreshToken> RefreshTokens { get; set; }
+        public DbSet<RefreshSession> RefreshSessions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -58,10 +59,32 @@ namespace ahis.template.identity.Contexts
             {
                 b.ToTable("RefreshTokens");
                 b.HasKey(x => x.Id);
-                b.Property(x => x.Token).IsRequired().HasMaxLength(450);
+                b.Property(x => x.TokenHash).IsRequired().HasColumnType("binary(32)");
                 b.Property(x => x.SecurityVersion).HasMaxLength(64);
                 b.Property(x => x.IsRevoked).HasDefaultValue(false);
                 b.HasIndex(x => x.UserId);
+                b.HasIndex(x => x.TokenHash).IsUnique();
+                b.HasIndex(x => x.ParentTokenId).IsUnique().HasFilter("[ParentTokenId] IS NOT NULL");
+                b.HasIndex(x => new { x.SessionId, x.IsRevoked, x.ExpiresAt });
+                b.HasOne<RefreshSession>()
+                    .WithMany()
+                    .HasForeignKey(x => x.SessionId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                b.HasOne<RefreshToken>()
+                    .WithMany()
+                    .HasForeignKey(x => x.ParentTokenId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            builder.Entity<RefreshSession>(b =>
+            {
+                b.ToTable("RefreshSessions");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.PublicId).IsRequired();
+                b.Property(x => x.UserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.IsRevoked).HasDefaultValue(false);
+                b.HasIndex(x => x.PublicId).IsUnique();
+                b.HasIndex(x => new { x.UserId, x.IsRevoked, x.ExpiresAt });
             });
         }
     }

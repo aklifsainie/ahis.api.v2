@@ -67,15 +67,15 @@ Implementation evidence (2026-09-21): bearer validation checks `IsActive`, `IsDe
 
 ### Refresh-token storage and session model
 
-- [ ] Store only a cryptographic hash of each refresh token.
-- [ ] Introduce a non-sequential, opaque public session identifier.
-- [ ] Record token family or parent/replacement relationships for replay detection.
-- [ ] Record session creation, last-used, expiry, and revocation information.
-- [ ] Decide whether to store bounded device name, client type, IP-derived information, and user-agent information.
-- [ ] Define retention and cleanup for expired and revoked sessions.
-- [ ] Add and review an `IdentityContext` migration; never apply it as routine verification.
+- [x] Store only a cryptographic hash of each refresh token. (2026-09-21)
+- [x] Introduce a non-sequential, opaque public session identifier. (2026-09-21)
+- [x] Record token family or parent/replacement relationships for replay detection. (2026-09-21)
+- [x] Record session creation, last-used, expiry, and revocation information. (2026-09-21)
+- [x] Decide whether to store bounded device name, client type, IP-derived information, and user-agent information. Device and network metadata are deferred pending a product privacy and retention policy. (2026-09-21)
+- [x] Define retention and cleanup for expired and revoked sessions. Hashed token rows are retained for at least seven days after expiry; parent rows remain until their replacement history is removed. Ended sessions are retained for at least 30 days after expiry or revocation and are deleted only after their token rows. A hosted cleanup service removes at most 500 token rows and 500 session rows per daily run. (2026-09-21)
+- [x] Add and review an `IdentityContext` migration; never apply it as routine verification. [`ReplaceRefreshTokensWithHashedSessionModel`](../../ahis.template.identity/Migrations/20260921074330_ReplaceRefreshTokensWithHashedSessionModel.cs) clears legacy raw-token rows before adding the required hash/session columns, so deployment requires users to sign in again. The migration was generated and source-reviewed; it was not applied. (2026-09-21)
 
-Current evidence: `RefreshToken` stores the raw token with an integer ID, user ID, created/expiry timestamps, and revocation state.
+Implementation evidence (2026-09-21): [`RefreshToken`](../../ahis.template.identity/Models/Entities/RefreshToken.cs) stores a SHA-256 `TokenHash`, session and parent-token keys, use timestamps, security version, and revocation state. [`RefreshSession`](../../ahis.template.identity/Models/Entities/RefreshSession.cs) supplies a random public `Guid` plus session lifecycle timestamps. [`AuthenticationService`](../../ahis.template.identity/Services/AuthenticationService.cs) creates a session at login or completed 2FA, records rotation lineage, makes rotation conditional on an unrevoked token, and invalidates all user sessions on replay. [`IdentityTokenStateService`](../../ahis.template.identity/Services/IdentityTokenStateService.cs) revokes sessions during user-wide invalidation.
 
 ### Existing endpoint hardening
 
@@ -342,8 +342,8 @@ Add one row when an item moves beyond backlog status.
 ## Source observations behind this backlog
 
 - [`Program.cs`](../../ahis.template.api/Program.cs) validates JWT issuer, audience, lifetime, signing key, user existence, active/deleted state, lockout, and a SecurityStamp-derived version.
-- [`AuthenticationService`](../../ahis.template.identity/Services/AuthenticationService.cs) rotates refresh tokens and detects reuse; refresh validation enforces the same account state and stored security version.
-- [`RefreshToken`](../../ahis.template.identity/Models/Entities/RefreshToken.cs) currently stores raw token material and has no opaque session ID, token family, last-used time, or device metadata.
+- [`AuthenticationService`](../../ahis.template.identity/Services/AuthenticationService.cs) rotates hash-addressed refresh tokens, preserves parent relationships, updates session activity, and invalidates user token state on replay; refresh validation enforces the same account state and stored security version.
+- [`RefreshToken`](../../ahis.template.identity/Models/Entities/RefreshToken.cs) stores only a SHA-256 hash and links each token to a random-public-ID session and, after rotation, its parent token. Device and network metadata remain intentionally absent pending product policy.
 - [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) invalidates sessions after password change and authenticator disable; JWT validation consumes the resulting version.
 - [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) exposes initial password setup publicly and accepts a user ID in the request flow.
 - [`AuthenticationController`](../../ahis.template.api/Controllers/v1/AuthenticationController.cs) exposes token encode/decode diagnostics without a confirmed authorization policy.

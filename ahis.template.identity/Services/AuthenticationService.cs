@@ -173,21 +173,33 @@ namespace ahis.template.identity.Services
 
         public async Task LogoutAsync(string refreshToken)
         {
-            var token = await _context.RefreshTokens
-                .FirstOrDefaultAsync(x =>
-                    x.Token == refreshToken &&
-                    !x.IsRevoked &&
-                    x.ExpiresAt > DateTime.UtcNow);
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync();
+                var tokenHash = RefreshTokenHashing.Compute(refreshToken);
+                var token = await _context.RefreshTokens
+                    .FirstOrDefaultAsync(x =>
+                        x.TokenHash == tokenHash &&
+                        !x.IsRevoked &&
+                        x.ExpiresAt > DateTime.UtcNow);
 
-            if (token == null)
-                return;
+                if (token == null)
+                    return;
 
-            token.IsRevoked = true;
-            token.RevokedAt = DateTime.UtcNow;
+                var revokedAt = DateTime.UtcNow;
+                await RevokeSessionAsync(token.SessionId, revokedAt);
+                await _unitOfWork.CommitTransactionAsync();
 
-            await _context.SaveChangesAsync();
-
-            await _signInManager.SignOutAsync();
+                await _signInManager.SignOutAsync();
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Logout failed.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync();
+            }
 
         }
 
@@ -196,9 +208,10 @@ namespace ahis.template.identity.Services
             try
             {
                 await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var tokenHash = RefreshTokenHashing.Compute(refreshToken);
                 var storedToken = await _context.RefreshTokens
-                    .AsTracking()
-                    .FirstOrDefaultAsync(x => x.Token == refreshToken, cancellationToken);
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
 
                 if (storedToken == null)
                     return Result.Fail("Invalid refresh token.");
@@ -232,9 +245,29 @@ namespace ahis.template.identity.Services
                 if (securityVersion is null)
                     return Result.Fail("Invalid refresh token.");
 
-                // Rotate token
-                storedToken.IsRevoked = true;
-                storedToken.RevokedAt = DateTime.UtcNow;
+                var now = DateTime.UtcNow;
+                var revoked = await _context.RefreshTokens
+                    .Where(token => token.Id == storedToken.Id && !token.IsRevoked && token.ExpiresAt > now)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(token => token.IsRevoked, true)
+                        .SetProperty(token => token.RevokedAt, now)
+                        .SetProperty(token => token.LastUsedAt, now), cancellationToken);
+
+                if (revoked != 1)
+                {
+                    var concurrentUse = await _context.RefreshTokens
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(token => token.Id == storedToken.Id, cancellationToken);
+
+                    if (concurrentUse?.IsRevoked == true)
+                    {
+                        var invalidation = await _tokenState.InvalidateAsync(user!, cancellationToken);
+                        if (invalidation.Succeeded)
+                            await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                    }
+
+                    return Result.Fail("Invalid refresh token.");
+                }
 
                 var accessToken = await GenerateJwtTokenAsync(user!, securityVersion);
                 var (newRefreshToken, newRefreshExpiresAt) = GenerateRefreshToken();
@@ -243,7 +276,15 @@ namespace ahis.template.identity.Services
                     user!.Id,
                     newRefreshToken,
                     newRefreshExpiresAt,
-                    securityVersion);
+                    securityVersion,
+                    storedToken.SessionId,
+                    storedToken.Id);
+
+                await _context.RefreshSessions
+                    .Where(session => session.Id == storedToken.SessionId && !session.IsRevoked)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(session => session.LastUsedAt, now)
+                        .SetProperty(session => session.ExpiresAt, newRefreshExpiresAt), cancellationToken);
 
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
                 await _unitOfWork.CommitTransactionAsync(cancellationToken);
@@ -513,20 +554,63 @@ namespace ahis.template.identity.Services
             return (token, expires);
         }
 
-        private async Task StoreRefreshTokenAsync(string userId, string token, DateTime expiresAt, string securityVersion)
+        private async Task StoreRefreshTokenAsync(
+            string userId,
+            string token,
+            DateTime expiresAt,
+            string securityVersion,
+            int? sessionId = null,
+            int? parentTokenId = null)
         {
+            var now = DateTime.UtcNow;
+            if (sessionId is null)
+            {
+                var session = new RefreshSession
+                {
+                    PublicId = Guid.NewGuid(),
+                    UserId = userId,
+                    CreatedAt = now,
+                    LastUsedAt = now,
+                    ExpiresAt = expiresAt,
+                    IsRevoked = false
+                };
+
+                await _context.RefreshSessions.AddAsync(session);
+                await _context.SaveChangesAsync();
+                sessionId = session.Id;
+            }
+
             var refreshToken = new RefreshToken
             {
                 UserId = userId,
-                Token = token,
+                SessionId = sessionId.Value,
+                ParentTokenId = parentTokenId,
+                TokenHash = RefreshTokenHashing.Compute(token),
                 SecurityVersion = securityVersion,
                 ExpiresAt = expiresAt,
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = now,
+                LastUsedAt = now,
                 IsRevoked = false,
                 RevokedAt = null
             };
 
             await _context.RefreshTokens.AddAsync(refreshToken);
+        }
+
+        private async Task RevokeSessionAsync(int sessionId, DateTime revokedAt)
+        {
+            await _context.RefreshTokens
+                .Where(token => token.SessionId == sessionId && !token.IsRevoked)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(token => token.IsRevoked, true)
+                    .SetProperty(token => token.RevokedAt, revokedAt));
+
+            await _context.RefreshSessions
+                .Where(session => session.Id == sessionId && !session.IsRevoked)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(session => session.IsRevoked, true)
+                    .SetProperty(session => session.RevokedAt, revokedAt)
+                    .SetProperty(session => session.LastUsedAt, revokedAt));
         }
 
 

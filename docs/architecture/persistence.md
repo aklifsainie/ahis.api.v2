@@ -1,6 +1,6 @@
 # Persistence
 
-`ApplicationDbContext` in Infrastructure owns Country, API-client, and audit data. It discovers entity configurations and installs `AuditSaveChangesInterceptor`. `IdentityContext` in Identity owns ASP.NET Core Identity data and `RefreshTokens`. Both use SQL Server and the same configured connection-string key, but have separate migration histories and snapshots.
+`ApplicationDbContext` in Infrastructure owns Country, API-client, and audit data. It discovers entity configurations and installs `AuditSaveChangesInterceptor`. `IdentityContext` in Identity owns ASP.NET Core Identity data, `RefreshSessions`, and hash-only `RefreshTokens`. Both use SQL Server and the same configured connection-string key, but have separate migration histories and snapshots.
 
 `GenericRepository<T>` supports integer-key `BaseEntity` records; `GenericGuidRepository<T>` supports `BaseGuidEntity` records and exposes `IQueryable` for audit pagination. Generic reads normally filter `IsDelete`; Country handlers add `IsActive`. Repository-pattern mutations use `IUnitOfWork`; Identity services work through Identity managers/context/unit of work.
 

@@ -1,5 +1,6 @@
 using ahis.template.api.ApiClientAuthentication;
 using ahis.template.api.Filters;
+using ahis.template.api.Services;
 using ahis.template.application.Interfaces.Services;
 using ahis.template.application.Services;
 using ahis.template.identity;
@@ -36,6 +37,7 @@ namespace ahis.template.api
             builder.Services.AddScoped<IEmailSender, EmailSender>();
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<UnitOfWork>();
+            builder.Services.AddHostedService<IdentitySessionCleanupHostedService>();
 
 
             // Add assemblies service extentions

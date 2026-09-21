@@ -63,6 +63,12 @@ public sealed class IdentityTokenStateService : IIdentityTokenStateService
                 .SetProperty(token => token.IsRevoked, true)
                 .SetProperty(token => token.RevokedAt, now), cancellationToken);
 
+        await _context.RefreshSessions
+            .Where(session => session.UserId == user.Id && !session.IsRevoked)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(session => session.IsRevoked, true)
+                .SetProperty(session => session.RevokedAt, now), cancellationToken);
+
         return IdentityResult.Success;
     }
 }
