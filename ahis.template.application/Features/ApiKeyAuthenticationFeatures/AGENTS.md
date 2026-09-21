@@ -1,33 +1,9 @@
-# API Client Authentication Feature Instructions
+# API-client Authentication Feature Instructions
 
-## Purpose and ownership
+This module owns external API clients, API keys, permission claims, key validation, revocation, rotation, and client deactivation.
 
-This feature owns external API clients, API keys, permission claims, key validation, key rotation/revocation, and client deactivation.
+Its administration endpoints are a local variation: controllers call `IApiClientService` directly, even though request models implement custom mediator interfaces. The service uses `ApplicationDbContext` directly. Do not copy this pattern to other modules without evidence and an explicit service decision.
 
-## Owned code
+Before changing it, inspect the affected controller/service/validator, API-key entities and EF configurations, authentication handler, relevant policies in `Program.cs`, and [the module guide](../../../docs/modules/api-client-authentication.md).
 
-- Application request models: this folder
-- Application contracts: `Interfaces/Services/IApiClientService.cs`, `Interfaces/Validators/IApiKeyValidator.cs`
-- Domain: `Models/Entities/ApiKey`, `Models/ViewModels/ApiKeyAuthenticationVM`
-- Infrastructure: `ApiClientAuthentication`, `Services/ApiClientService.cs`, EF configurations, `ApplicationDbContext`
-- API: `ApiClientAuthentication` handler classes and `Controllers/v1/ApiClientController.cs`
-
-## Established variation
-
-Administration endpoints currently call `IApiClientService` directly; their request models implement custom mediator request interfaces but have no handlers. The service directly uses `ApplicationDbContext`. This is established code but not the default for unrelated modules. Any new endpoint blueprint must decide whether to preserve this variation or complete a CQRS flow.
-
-## Security rules
-
-- Return a raw API key only from its creation operation; persist only its hash and a non-secret prefix.
-- Key use requires active/unrevoked/unexpired key plus active client.
-- Do not reveal the specific reason an authentication key failed.
-- Normalize permissions to lowercase and remove duplicates.
-- Deactivating a client revokes active keys.
-
-## Before modifying
-
-Read this folder's docs, all API-key entities/configurations, `ApiClientService`, `ApiKeyValidator`, the API authentication handler, controller, policies in `Program.cs`, and migrations. Produce a blueprint and wait for approval.
-
-## Known security risk
-
-`ApiClientController` currently has no authorization attribute. Do not copy that omission. Authorization changes require an explicit security-impact blueprint and tests.
+Never persist or log a raw API key; return it only from its creation response. API-client administration currently lacks explicit authorization and mutation auditing, while the stored per-client rate limit is not enforced. Treat those as security/behavior risks requiring a blueprinted change, not as conventions.

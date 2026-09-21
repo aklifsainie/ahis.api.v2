@@ -1,21 +1,12 @@
 ---
 name: create-ef-migration
-description: Inspect and, only after explicit approval, generate an EF Core migration for the correct ApplicationDbContext or IdentityContext without applying it to a database.
+description: Plan and, only after explicit approval, generate an AHIS API Template EF Core migration for ApplicationDbContext or IdentityContext without applying it to a database.
 ---
 
 # Create EF Migration
 
-Never generate or apply a migration immediately. Read root/module instructions, `docs/architecture/persistence.md`, entity/configuration changes, the correct context, current snapshot, recent migrations, and project package versions.
+Read root/module guidance, [persistence documentation](../../../docs/architecture/persistence.md), affected entities/configurations, the correct context, snapshot, and recent migrations. This repository has separate Application and Identity contexts, migrations, and package versions; never guess the context or startup project.
 
-Produce a **Migration Blueprint** containing:
+Before generation, provide a Migration Blueprint with context, migration and startup projects, affected tables/columns/indexes/relationships, nullability/defaults/delete behavior, rename-versus-drop/create decision, existing-data and destructive risks, migration name, exact command, and verification plan. Wait for explicit approval.
 
-- Context, migration project, and startup project
-- Entities and tables affected
-- Columns, types, nullability, defaults, indexes, unique constraints, foreign keys, and delete behavior
-- Rename versus drop/create behavior
-- Potentially destructive changes and existing-data/backfill risks
-- Known model/migration inconsistencies relevant to the context
-- Recommended migration name and exact command
-- Verification plan
-
-Wait for explicit approval. After approval, generate the migration, inspect every operation and snapshot change, build the affected projects, and report it. Never run `dotnet ef database update` unless the user separately and explicitly requests applying it to a named target.
+After approval, generate only the planned migration, inspect every generated operation and snapshot change, then build the affected projects. Never run `dotnet ef database update` unless separately and explicitly authorized for a named target.

@@ -1,51 +1,24 @@
 # Repository Review Guide
 
-Review changes against the existing module pattern and its applicable `AGENTS.md`. Prioritize correctness, security, behavior changes, and missing tests over style preferences.
+Review changes against the owning module, its `AGENTS.md`, and the closest active example. Prioritize evidence-backed correctness, security, behavior regression, and missing verification over style.
 
-## Architecture and ownership
+## Boundaries and contracts
 
-- Reject wrong-direction project references not justified by the current dependency graph.
-- Keep repository contracts in Application and application persistence implementations in Infrastructure.
-- Flag direct `ApplicationDbContext` use when the affected module follows the repository pattern.
-- Flag unnecessary services for single-repository operations, and overloaded handlers where a real multi-step workflow belongs in an established service.
-- Flag business logic in controllers. Note that API-client administration is a known legacy variation, not a default template.
-- Ensure new requests use the custom mediator abstractions, not MediatR types.
+- Check project-reference direction and ownership; do not normalize the non-strict Application-to-Identity dependency during unrelated work.
+- Require a concrete reason for direct `ApplicationDbContext` use, direct controller services, or exposed `IQueryable`; API-client administration and audit queries are known exceptions.
+- Verify that custom mediator requests/handlers—not MediatR—are used where the module follows mediator dispatch.
+- Check public routes, response/error shapes, cancellation, compatibility, and configuration boundaries against neighboring endpoints.
 
-## API and security
+## Security and behavior
 
-- Verify explicit authentication and authorization, including policy/permission enforcement rather than authentication alone.
-- Treat missing authorization on administrative endpoints as high priority.
-- Check routes, verbs, status codes, response envelopes, validation errors, rate limits, and cancellation-token propagation against the neighboring controller.
-- Identify breaking API contract changes.
-- Reject logging or returning passwords, raw refresh tokens, raw API keys beyond their one-time creation response, signing keys, SMTP credentials, or sensitive audit values.
-- Preserve enumeration-resistant authentication responses when that is the established rule.
+- Verify actual authorization policies, not authentication alone. Administrative, setup, Country, and audit paths require particular scrutiny.
+- Check that public setup or recovery operations are bound to their intended user and that sensitive material is neither logged nor returned.
+- Trace status, lockout, active/deleted, JWT, refresh-token, cookie, security-stamp, and 2FA effects across every relevant path; do not assume a service call invalidates sessions unless validation enforces it.
+- Reconcile validations and constraints across attributes, FluentValidation, handlers, Identity options, and EF indexes.
 
-## Business behavior
+## Persistence, auditing, and tests
 
-- Confirm rule ownership and enforcement location from module documentation and source.
-- Look for duplicated or conflicting validation across Data Annotations, FluentValidation, handlers, EF constraints, and Identity options.
-- Check active/deleted/status transitions and idempotency behavior.
-- Require regression tests for confirmed business-rule changes.
-
-## EF Core and persistence
-
-- Use no tracking for reads and tracking for mutations unless there is a documented reason otherwise.
-- Check soft-delete filters; do not expose deleted data accidentally.
-- Look for N+1 queries, unbounded queries, unsafe `IQueryable` exposure, missing indexes, and incorrect delete behavior.
-- Verify unit-of-work/transaction behavior, including rollback or disposal on every early return and exception path.
-- Review migrations for destructive changes, nullable-to-required conversions, data backfills, indexes, keys, foreign keys, and the correct DbContext/startup project.
-- Never apply a migration during review.
-
-## Auditing and errors
-
-- Ensure `IAuditableEntity` use is deliberate and key generation is compatible with the interceptor.
-- Mask properties carrying sensitive values.
-- Use explicit audit logging for reads or security events when the module requires it.
-- Confirm `FluentResults` errors map to the intended HTTP response and do not expose internal exceptions.
-
-## Tests and verification
-
-- Match xUnit/Moq conventions in `ahis.template.test` unless an approved test strategy introduces another test type.
-- Cover success, validation, not-found/conflict, authorization, status transition, persistence, and cancellation paths proportional to the change.
-- Run affected tests first, then build and test the solution.
-- Report warnings and failures accurately; do not hide pre-existing warnings.
+- Check tracking, soft-delete filters, uniqueness, pagination, transactions, early returns, migration context, and destructive/data risks.
+- Ensure auditable entities have keys available when the interceptor runs, and distinguish transactional automatic audits from best-effort explicit audits.
+- Select unit, integration, controller, or persistence coverage proportionate to the risk. The current suite is narrow Country-handler coverage; do not claim broader coverage.
+- Report evidence, uncertainty, and validation results accurately. Never apply a migration during review.

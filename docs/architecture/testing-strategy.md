@@ -1,24 +1,16 @@
 # Testing Strategy
 
-## Current state
+`ahis.template.test` uses xUnit, Moq, FluentAssertions, and coverlet. The committed suite contains two `GetAllCountryQueryHandler` unit tests. They establish handler success/empty behavior, projection/order, and selected collaborator calls; repository soft-delete behavior is simulated by the mock, not verified against EF.
 
-`ahis.template.test` uses xUnit, Moq, FluentAssertions, and coverlet. The current suite contains two unit tests for `GetAllCountryQueryHandler`; they mock the repository, logger, and audit logger and verify results plus important dependency calls.
+There are no committed integration, controller, authentication, authorization, EF/database, or migration tests. Choose the test layer based on the change rather than cloning the existing mock pattern. Identity, API-key, authorization, transaction, query-filter, audit, and migration changes often need more than a handler unit test.
 
-There are no committed integration, controller, authentication, EF/database, or migration tests.
+Verify narrow to broad, substituting the affected project and test filter:
 
-## Expectations for changes
+```powershell
+dotnet build .\<affected-project>\<affected-project>.csproj --no-restore
+dotnet test .\ahis.template.test\ahis.template.test.csproj --no-restore --filter "FullyQualifiedName~<affected-test>"
+dotnet build .\AhisApiTemplate.sln --no-restore
+dotnet test .\AhisApiTemplate.sln --no-build --no-restore
+```
 
-- Inspect the closest existing tests before choosing naming and setup style.
-- Test confirmed business rules and regression paths, not implementation trivia.
-- Handler changes should normally cover success plus relevant validation, not-found, conflict, empty-result, audit, and cancellation behavior.
-- Security changes should cover authentication/authorization and avoid assertions containing raw secrets.
-- Persistence changes should test query filters, tracking, uniqueness/status behavior, and transactions at the appropriate level. Propose integration infrastructure before adding it.
-
-## Verification order
-
-1. Build the affected project.
-2. Run the affected tests.
-3. Build `AhisApiTemplate.sln`.
-4. Run the solution tests.
-
-Use `--no-restore` after a successful restore. Do not use database update commands as verification.
+The Country example is `FullyQualifiedName~ahis.template.test.TestFeatures.CountryFeature.GetAllCountryQueryTest`; it is not a default check for unrelated changes. If no relevant focused test exists, report that limitation and run the affected project/solution checks instead. Restore first only when required. Build/test create local outputs and may use the network. Never use database-update commands as verification.

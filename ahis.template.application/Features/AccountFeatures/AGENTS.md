@@ -1,33 +1,11 @@
 # Account Feature Instructions
 
-## Purpose and ownership
+Account owns registration and post-registration configuration: email confirmation, initial and changed passwords, profile, current-account view, and authenticator setup.
 
-Account owns user registration and configuration: email confirmation, initial/change password, profile, current-account view, and authenticator setup/enable/disable.
+Controllers dispatch through the custom mediator; handlers delegate Identity-specific multi-step behavior to `IAccountService`. Keep `UserManager`, `SignInManager`, confirmation/password/2FA operations, Identity persistence, and SMTP coordination in that service boundary. Do not add an application repository merely to mirror Country.
 
-## Owned code
+Before changing this module, read the closest command/query, `AccountController`, `IAccountService`, `AccountService`, `ApplicationUser`, related Identity configuration, and [the Account module guide](../../../docs/modules/account.md). Inspect Authentication when a password, email, token, or 2FA flow is involved.
 
-- Application: this folder
-- Domain responses: `ahis.template.domain/Models/ViewModels/AccountVM`
-- Identity contracts/implementation: `identity/Interfaces/IAccountService.cs`, `identity/Services/AccountService.cs`, Identity DTOs and `ApplicationUser`
-- API: `api/Controllers/v1/AccountController.cs`
+Important observed risks: the initial-password endpoint is public and accepts a user ID; disabling 2FA does not demonstrably clear all Identity token-store material; updating the security stamp does not itself invalidate this application's JWTs or refresh tokens. Treat any correction as a security-sensitive blueprinted change.
 
-## Established flow
-
-Controllers send custom mediator requests. Handlers obtain the current user where required and delegate multi-step Identity behavior to `IAccountService`. Keep ASP.NET Identity operations, confirmation/password/2FA workflows, and Identity persistence in the Identity service. Do not add an application repository for Identity users merely to match Country.
-
-## Security and rules
-
-- Registration creates a user without a password and sends confirmation email.
-- Initial password setup is only for users without a password.
-- Protected self-service operations derive user ID from the authenticated principal.
-- Profile update marks the account configured.
-- Enabling 2FA requires a valid code and returns recovery codes once; disabling clears authenticator material.
-- Password change updates the security stamp.
-
-## Before modifying
-
-Read this folder's docs, the relevant command/query, `AccountController`, `IAccountService`, `AccountService`, `ApplicationUser`, relevant Identity DTOs, Identity configuration in `Program.cs`, and Authentication rules when tokens/sessions are affected. Produce a blueprint and wait for approval.
-
-## Testing
-
-There are no Account tests yet. Propose handler tests and, for Identity behavior, an appropriate integration strategy rather than assuming repository mocks.
+There are no Account tests. Select the test layer deliberately; Identity-manager behavior may need integration coverage rather than repository mocks.
