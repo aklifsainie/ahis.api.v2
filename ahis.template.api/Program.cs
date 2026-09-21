@@ -312,8 +312,12 @@ namespace ahis.template.api
                         var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
                         var version = context.Principal?.FindFirstValue(IIdentityTokenStateService.SecurityVersionClaim);
                         var tokenUse = context.Principal?.FindFirstValue(IIdentityTokenStateService.TokenUseClaim);
+                        var sessionId = Guid.TryParse(context.Principal?.FindFirstValue("session_id"), out var parsedSessionId)
+                            ? parsedSessionId
+                            : (Guid?)null;
                         if (tokenUse != IIdentityTokenStateService.AccessTokenUse ||
-                            !await tokenState.ValidateAsync(userId, version))
+                            !await tokenState.ValidateAsync(userId, version) ||
+                            !await tokenState.ValidateSessionAsync(userId, sessionId, context.HttpContext.RequestAborted))
                             context.Fail("Invalid bearer token");
                     }
                 };

@@ -433,6 +433,40 @@ namespace ahis.template.api.Controllers.v1
             return NoContent();
         }
 
+        /// <summary>Revokes one refresh session for the authenticated account.</summary>
+        /// <remarks>
+        /// Revoking a different session requires a current step-up proof in the <c>X-Step-Up-Proof</c>
+        /// request header. Repeated, missing, and other-account session identifiers return the same
+        /// successful response. Revoking the current session also clears its refresh cookie.
+        /// </remarks>
+        [HttpDelete("sessions/{sessionId:guid}")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> RevokeSession(
+            Guid sessionId,
+            [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof)
+        {
+            var result = await _mediator.Send(
+                new RevokeSessionCommand { SessionId = sessionId, StepUpProof = stepUpProof },
+                HttpContext.RequestAborted);
+            if (result.IsFailed)
+            {
+                if (result.Errors.Any(error => error.Metadata.ContainsKey("OperationalFailure")))
+                    return Problem(statusCode: StatusCodes.Status500InternalServerError);
+
+                return ToValidationProblem(result);
+            }
+
+            if (result.Value)
+                ClearRefreshCookie();
+
+            return NoContent();
+        }
+
         /// <summary>Lists active refresh sessions for the authenticated account.</summary>
         /// <remarks>
         /// Session identifiers are opaque. Device and location information are not collected or returned.
@@ -447,6 +481,23 @@ namespace ahis.template.api.Controllers.v1
         {
             var result = await _mediator.Send(query, HttpContext.RequestAborted);
             return ToPagedActionResult(result);
+        }
+
+        /// <summary>Gets credential and session state for the authenticated account.</summary>
+        /// <remarks>
+        /// This response contains only security state and counts. It never includes credentials,
+        /// authenticator keys, recovery codes, or token material.
+        /// </remarks>
+        [HttpGet("security-summary")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(typeof(ResponseDto<SecuritySummaryResponseVM>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> GetSecuritySummary()
+        {
+            var result = await _mediator.Send(new GetSecuritySummaryQuery(), HttpContext.RequestAborted);
+            return ToActionResult(result);
         }
 
         [HttpPost("2fa/reset-authenticator")]

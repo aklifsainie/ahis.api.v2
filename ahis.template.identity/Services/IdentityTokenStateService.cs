@@ -50,6 +50,25 @@ public sealed class IdentityTokenStateService : IIdentityTokenStateService
         return Matches(user, presentedVersion);
     }
 
+    public async Task<bool> ValidateSessionAsync(
+        string? userId,
+        Guid? sessionPublicId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || !sessionPublicId.HasValue)
+            return false;
+
+        var now = DateTime.UtcNow;
+        return await _context.RefreshSessions
+            .AsNoTracking()
+            .AnyAsync(session =>
+                session.UserId == userId &&
+                session.PublicId == sessionPublicId.Value &&
+                !session.IsRevoked &&
+                session.ExpiresAt > now,
+                cancellationToken);
+    }
+
     public async Task<IdentityResult> InvalidateAsync(ApplicationUser user, CancellationToken cancellationToken = default)
     {
         var result = await _userManager.UpdateSecurityStampAsync(user);

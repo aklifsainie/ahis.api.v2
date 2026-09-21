@@ -27,6 +27,12 @@ public sealed class RevokeAllSessionsCommand : IRequest<Result>
     public string StepUpProof { get; set; } = default!;
 }
 
+public sealed class RevokeSessionCommand : IRequest<Result<bool>>
+{
+    public Guid SessionId { get; init; }
+    public string? StepUpProof { get; init; }
+}
+
 public sealed class RequestEmailChangeCommand : IRequest<Result>
 {
     [Required, EmailAddress]
@@ -137,6 +143,48 @@ public sealed class RevokeAllSessionsCommandHandler : IRequestHandler<RevokeAllS
             result.IsSuccess ? "AllSessionsRevoked" : "AllSessionsRevocationFailed",
             cancellationToken: cancellationToken);
         return result;
+    }
+}
+
+public sealed class RevokeSessionCommandHandler : IRequestHandler<RevokeSessionCommand, Result<bool>>
+{
+    private readonly IAccountService _accountService;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IAuditLogger _auditLogger;
+
+    public RevokeSessionCommandHandler(
+        IAccountService accountService,
+        ICurrentUserService currentUser,
+        IAuditLogger auditLogger)
+    {
+        _accountService = accountService;
+        _currentUser = currentUser;
+        _auditLogger = auditLogger;
+    }
+
+    public async Task<Result<bool>> Handle(RevokeSessionCommand request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_currentUser.UserId))
+            return Result.Fail<bool>("Unable to revoke session.");
+
+        var isCurrentSession = _currentUser.SessionId == request.SessionId;
+        var result = await _accountService.RevokeSessionAsync(
+            _currentUser.UserId,
+            request.SessionId,
+            _currentUser.SessionId,
+            request.StepUpProof,
+            cancellationToken);
+
+        await _auditLogger.LogAsync(
+            result.IsSuccess ? AuditActionEnum.Logout : AuditActionEnum.LoginFailed,
+            "AccountSecurity",
+            _currentUser.UserId,
+            result.IsSuccess ? "SessionRevoked" : "SessionRevocationFailed",
+            cancellationToken: cancellationToken);
+
+        return result.IsSuccess
+            ? Result.Ok(isCurrentSession)
+            : Result.Fail<bool>(result.Errors);
     }
 }
 

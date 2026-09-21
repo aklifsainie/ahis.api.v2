@@ -499,6 +499,69 @@ namespace ahis.template.identity.Services
             }
         }
 
+        public async Task<Result> RevokeSessionAsync(
+            string userId,
+            Guid sessionPublicId,
+            Guid? currentSessionId,
+            string? stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user))
+                return Result.Fail("Unable to revoke session.");
+
+            if (currentSessionId != sessionPublicId &&
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail("Unable to revoke session.");
+            }
+
+            try
+            {
+                var session = await _context.RefreshSessions
+                    .AsNoTracking()
+                    .Where(candidate => candidate.UserId == userId && candidate.PublicId == sessionPublicId)
+                    .Select(candidate => new { candidate.Id, candidate.IsRevoked })
+                    .SingleOrDefaultAsync(cancellationToken);
+
+                // A missing or already-ended owner session is an idempotent success. Filtering by owner
+                // prevents the response from disclosing whether another account owns the public ID.
+                if (session is null || session.IsRevoked)
+                    return Result.Ok();
+
+                var revokedAt = DateTime.UtcNow;
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+
+                var updated = await _context.RefreshSessions
+                    .Where(candidate => candidate.Id == session.Id && !candidate.IsRevoked)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(candidate => candidate.IsRevoked, true)
+                        .SetProperty(candidate => candidate.RevokedAt, revokedAt)
+                        .SetProperty(candidate => candidate.LastUsedAt, revokedAt), cancellationToken);
+
+                if (updated == 0)
+                    return Result.Ok();
+
+                await _context.RefreshTokens
+                    .Where(token => token.SessionId == session.Id && !token.IsRevoked)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(token => token.IsRevoked, true)
+                        .SetProperty(token => token.RevokedAt, revokedAt), cancellationToken);
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Single-session revocation failed for user {UserId}", userId);
+                return OperationalSessionRevocationFailure();
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
         public async Task<Result<(IReadOnlyList<ActiveSessionDto> Sessions, int TotalCount)>> GetActiveSessionsAsync(
             string userId,
             Guid? currentSessionId,
@@ -528,6 +591,37 @@ namespace ahis.template.identity.Services
                 .ToListAsync(cancellationToken);
 
             return Result.Ok(((IReadOnlyList<ActiveSessionDto>)items, totalCount));
+        }
+
+        public async Task<Result<SecuritySummaryDto>> GetSecuritySummaryAsync(
+            string userId,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user))
+                return Result.Fail<SecuritySummaryDto>("Unable to retrieve security summary.");
+
+            var now = DateTime.UtcNow;
+            var authenticatorKey = await _userManager.GetAuthenticatorKeyAsync(user!);
+            var recoveryCodeCount = await _userManager.CountRecoveryCodesAsync(user!);
+            var activeSessionCount = await _context.RefreshSessions
+                .AsNoTracking()
+                .CountAsync(session =>
+                    session.UserId == userId &&
+                    !session.IsRevoked &&
+                    session.ExpiresAt > now,
+                    cancellationToken);
+
+            return Result.Ok(new SecuritySummaryDto
+            {
+                EmailConfirmed = user!.EmailConfirmed,
+                PhoneConfirmed = user.PhoneNumberConfirmed,
+                PasswordPresent = await _userManager.HasPasswordAsync(user),
+                TwoFactorEnabled = user.TwoFactorEnabled,
+                AuthenticatorConfigured = !string.IsNullOrWhiteSpace(authenticatorKey),
+                RemainingRecoveryCodeCount = recoveryCodeCount,
+                ActiveSessionCount = activeSessionCount
+            });
         }
 
         public async Task<Result> ResetAuthenticatorAsync(

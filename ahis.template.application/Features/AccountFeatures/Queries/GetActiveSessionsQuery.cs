@@ -73,3 +73,56 @@ public sealed class GetActiveSessionsQueryHandler : IRequestHandler<GetActiveSes
         return Result.Ok(response);
     }
 }
+
+public sealed class GetSecuritySummaryQuery : IRequest<Result<SecuritySummaryResponseVM>>
+{
+}
+
+public sealed class GetSecuritySummaryQueryHandler : IRequestHandler<GetSecuritySummaryQuery, Result<SecuritySummaryResponseVM>>
+{
+    private readonly IAccountService _accountService;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IAuditLogger _auditLogger;
+
+    public GetSecuritySummaryQueryHandler(
+        IAccountService accountService,
+        ICurrentUserService currentUser,
+        IAuditLogger auditLogger)
+    {
+        _accountService = accountService;
+        _currentUser = currentUser;
+        _auditLogger = auditLogger;
+    }
+
+    public async Task<Result<SecuritySummaryResponseVM>> Handle(
+        GetSecuritySummaryQuery request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_currentUser.UserId))
+            return Result.Fail<SecuritySummaryResponseVM>("Unable to retrieve security summary.");
+
+        var result = await _accountService.GetSecuritySummaryAsync(_currentUser.UserId, cancellationToken);
+        if (result.IsFailed)
+            return Result.Fail<SecuritySummaryResponseVM>(result.Errors);
+
+        var response = new SecuritySummaryResponseVM
+        {
+            EmailConfirmed = result.Value.EmailConfirmed,
+            PhoneConfirmed = result.Value.PhoneConfirmed,
+            PasswordPresent = result.Value.PasswordPresent,
+            TwoFactorEnabled = result.Value.TwoFactorEnabled,
+            AuthenticatorConfigured = result.Value.AuthenticatorConfigured,
+            RemainingRecoveryCodeCount = result.Value.RemainingRecoveryCodeCount,
+            ActiveSessionCount = result.Value.ActiveSessionCount
+        };
+
+        await _auditLogger.LogAsync(
+            AuditActionEnum.View,
+            "AccountSecurity",
+            _currentUser.UserId,
+            "SecuritySummaryViewed",
+            cancellationToken: cancellationToken);
+
+        return Result.Ok(response);
+    }
+}

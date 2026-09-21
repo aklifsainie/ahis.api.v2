@@ -13,5 +13,6 @@ public interface IIdentityTokenStateService
     bool IsEligible(ApplicationUser? user);
     bool Matches(ApplicationUser? user, string? presentedVersion);
     Task<bool> ValidateAsync(string? userId, string? presentedVersion);
+    Task<bool> ValidateSessionAsync(string? userId, Guid? sessionPublicId, CancellationToken cancellationToken = default);
     Task<IdentityResult> InvalidateAsync(ApplicationUser user, CancellationToken cancellationToken = default);
 }

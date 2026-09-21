@@ -127,21 +127,23 @@ Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.
 
 ### Revoke one session
 
-- [ ] `DELETE /api/account/sessions/{sessionId}`
-  - [ ] Verify ownership of the opaque session ID.
-  - [ ] Require a recent step-up proof when revoking a session other than the current one.
-  - [ ] Make repeated revocation idempotent.
-  - [ ] Clear the refresh cookie when the current session is selected.
-  - [ ] Audit the action without logging tokens.
+- [x] `DELETE /api/account/sessions/{sessionId}` (2026-09-22)
+  - [x] Verify ownership of the opaque session ID.
+  - [x] Require a recent step-up proof when revoking a session other than the current one.
+  - [x] Make repeated revocation idempotent.
+  - [x] Clear the refresh cookie when the current session is selected.
+  - [x] Audit the action without logging tokens.
 
-Blocked by active-session listing and the P0 session model.
+Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) accepts the optional `X-Step-Up-Proof` header and clears the current refresh cookie only for the selected current session. [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) revokes owner sessions and their active refresh tokens atomically; unknown, ended, and other-account IDs are an indistinguishable successful response. Bearer validation now requires an active opaque session ID, so revocation immediately invalidates that session's access token. A revoked token from an ended session no longer triggers account-wide replay invalidation.
 
 ### Security summary
 
-- [ ] `GET /api/account/security-summary`
-  - [ ] Return email-confirmed, phone-confirmed, password-present, MFA-enabled, authenticator-configured, remaining-recovery-code count, and active-session count.
-  - [ ] Never return authenticator keys, provisioning URIs, recovery codes, tokens, or password data.
-  - [ ] Consider returning last password change and last security-sensitive event only if reliable timestamps exist.
+- [x] `GET /api/account/security-summary` (2026-09-22)
+  - [x] Return email-confirmed, phone-confirmed, password-present, MFA-enabled, authenticator-configured, remaining-recovery-code count, and active-session count.
+  - [x] Never return authenticator keys, provisioning URIs, recovery codes, tokens, or password data.
+  - [x] Do not return last password change or last security-sensitive event because reliable timestamps are not available.
+
+Implementation evidence (2026-09-22): [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) uses ASP.NET Core Identity for credential state and recovery-code count, and the active-session predicate used by session listing. [`GetSecuritySummaryQueryHandlerTest`](../../ahis.template.test/TestFeatures/AccountFeature/GetSecuritySummaryQueryHandlerTest.cs) covers current-principal routing, response projection, and audit routing.
 
 ### Regenerate recovery codes
 

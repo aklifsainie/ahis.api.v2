@@ -202,16 +202,28 @@ namespace ahis.template.identity.Services
 
                 if (storedToken.IsRevoked)
                 {
-                    _logger.LogWarning(
-                        "Refresh token reuse detected for user {UserId}",
-                        storedToken.UserId);
+                    var sessionIsActive = await _context.RefreshSessions
+                        .AsNoTracking()
+                        .AnyAsync(session =>
+                            session.Id == storedToken.SessionId &&
+                            session.UserId == storedToken.UserId &&
+                            !session.IsRevoked &&
+                            session.ExpiresAt > DateTime.UtcNow,
+                            cancellationToken);
 
-                    var reusedBy = await _userManager.FindByIdAsync(storedToken.UserId);
-                    if (reusedBy is not null)
+                    if (sessionIsActive)
                     {
-                        var invalidation = await _tokenState.InvalidateAsync(reusedBy, cancellationToken);
-                        if (!invalidation.Succeeded)
-                            return Result.Fail("Invalid refresh token.");
+                        _logger.LogWarning(
+                            "Refresh token reuse detected for user {UserId}",
+                            storedToken.UserId);
+
+                        var reusedBy = await _userManager.FindByIdAsync(storedToken.UserId);
+                        if (reusedBy is not null)
+                        {
+                            var invalidation = await _tokenState.InvalidateAsync(reusedBy, cancellationToken);
+                            if (!invalidation.Succeeded)
+                                return Result.Fail("Invalid refresh token.");
+                        }
                     }
                     await _unitOfWork.CommitTransactionAsync(cancellationToken);
 
