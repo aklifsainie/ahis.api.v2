@@ -624,6 +624,44 @@ namespace ahis.template.identity.Services
             });
         }
 
+        public async Task<Result<IEnumerable<string>>> RegenerateRecoveryCodesAsync(
+            string userId,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user) || !user!.TwoFactorEnabled ||
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail<IEnumerable<string>>("Unable to regenerate recovery codes.");
+            }
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
+                var codes = recoveryCodes?.ToArray() ?? Array.Empty<string>();
+                if (codes.Length != 10)
+                    return Result.Fail<IEnumerable<string>>("Unable to regenerate recovery codes.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(
+                    user.Email,
+                    "Recovery codes regenerated",
+                    "Your recovery codes were regenerated. Previous recovery codes can no longer be used.");
+                return Result.Ok(codes.AsEnumerable());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Recovery-code regeneration failed for user {UserId}", userId);
+                return Result.Fail<IEnumerable<string>>("Unable to regenerate recovery codes.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
         public async Task<Result> ResetAuthenticatorAsync(
             string userId,
             string stepUpProof,

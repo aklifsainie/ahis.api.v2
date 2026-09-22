@@ -21,6 +21,12 @@ public sealed class ResetAuthenticatorCommand : IRequest<Result>
     public string StepUpProof { get; set; } = default!;
 }
 
+public sealed class RegenerateRecoveryCodesCommand : IRequest<Result<IEnumerable<string>>>
+{
+    [Required]
+    public string StepUpProof { get; set; } = default!;
+}
+
 public sealed class RevokeAllSessionsCommand : IRequest<Result>
 {
     [Required]
@@ -110,6 +116,45 @@ public sealed class ResetAuthenticatorCommandHandler : IRequestHandler<ResetAuth
         var result = await _accountService.ResetAuthenticatorAsync(_currentUser.UserId, request.StepUpProof, cancellationToken);
         if (result.IsSuccess)
             await _auditLogger.LogAsync(AuditActionEnum.Update, "AccountSecurity", _currentUser.UserId, "AuthenticatorReset", cancellationToken: cancellationToken);
+        return result;
+    }
+}
+
+public sealed class RegenerateRecoveryCodesCommandHandler : IRequestHandler<RegenerateRecoveryCodesCommand, Result<IEnumerable<string>>>
+{
+    private readonly IAccountService _accountService;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IAuditLogger _auditLogger;
+
+    public RegenerateRecoveryCodesCommandHandler(
+        IAccountService accountService,
+        ICurrentUserService currentUser,
+        IAuditLogger auditLogger)
+    {
+        _accountService = accountService;
+        _currentUser = currentUser;
+        _auditLogger = auditLogger;
+    }
+
+    public async Task<Result<IEnumerable<string>>> Handle(
+        RegenerateRecoveryCodesCommand request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_currentUser.UserId))
+            return Result.Fail<IEnumerable<string>>("Unable to regenerate recovery codes.");
+
+        var result = await _accountService.RegenerateRecoveryCodesAsync(
+            _currentUser.UserId,
+            request.StepUpProof,
+            cancellationToken);
+
+        await _auditLogger.LogAsync(
+            result.IsSuccess ? AuditActionEnum.Update : AuditActionEnum.LoginFailed,
+            "AccountSecurity",
+            _currentUser.UserId,
+            result.IsSuccess ? "RecoveryCodesRegenerated" : "RecoveryCodesRegenerationFailed",
+            cancellationToken: cancellationToken);
+
         return result;
     }
 }

@@ -14,6 +14,7 @@ Account owns registration, email confirmation, initial and changed passwords, pr
 - `GET /api/account/sessions` returns a paginated, owner-only projection of active sessions using opaque public IDs and UTC lifecycle times. `DELETE /api/account/sessions/{sessionId}` is idempotent, requires a step-up proof for another session, and clears the refresh cookie only when it ends the current session. Bearer validation requires an active session public ID, so an ended session's access token is immediately rejected; older tokens without that claim require a new login. Device, IP, and location metadata are not collected.
 - `GET /api/account/security-summary` returns only confirmation, credential-presence, MFA, recovery-code-count, and active-session-count state. It deliberately excludes credential material and timestamps whose source is not reliable.
 - Email changes use Identity's change-email token and update the username only when it matched the previous email. Deactivation sets both inactive and soft-delete state; recovery has no self-service path.
+- `POST /api/account/2fa/recovery-codes/regenerate` requires a five-minute step-up proof and enabled MFA. It replaces all existing Identity-store recovery codes, returns the new codes only in the successful response, sends a best-effort security notification, and does not revoke sessions or rotate the security stamp.
 
 ## Risks and evidence boundaries
 

@@ -500,6 +500,28 @@ namespace ahis.template.api.Controllers.v1
             return ToActionResult(result);
         }
 
+        /// <summary>Replaces all recovery codes for the authenticated account.</summary>
+        /// <remarks>
+        /// Requires a current five-minute step-up proof. The returned recovery codes are shown only in
+        /// this response; save them securely before closing it. A later regeneration invalidates them.
+        /// </remarks>
+        [HttpPost("2fa/recovery-codes/regenerate")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(typeof(ResponseDto<IEnumerable<string>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> RegenerateRecoveryCodes([FromBody] RegenerateRecoveryCodesCommand command)
+        {
+            var result = await _mediator.Send(command, HttpContext.RequestAborted);
+            if (result.IsFailed)
+                return ToValidationProblem(result);
+
+            Response.Headers.CacheControl = "no-store";
+            return ToActionResult(result);
+        }
+
         [HttpPost("2fa/reset-authenticator")]
         [Authorize]
         [EnableRateLimiting("AuthenticatedSecurityPolicy")]

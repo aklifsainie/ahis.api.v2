@@ -147,12 +147,14 @@ Implementation evidence (2026-09-22): [`AccountService`](../../ahis.template.ide
 
 ### Regenerate recovery codes
 
-- [ ] `POST /api/account/2fa/recovery-codes/regenerate`
-  - [ ] Require MFA to be enabled and require recent step-up authentication.
-  - [ ] Replace all previous recovery codes.
-  - [ ] Return new codes exactly once.
-  - [ ] Never log or persist a second plaintext copy of the codes.
-  - [ ] Notify the user that recovery codes changed.
+- [x] `POST /api/account/2fa/recovery-codes/regenerate` (2026-09-22)
+  - [x] Require MFA to be enabled and require recent step-up authentication.
+  - [x] Replace all previous recovery codes.
+  - [x] Return new codes exactly once.
+  - [x] Never log or persist a second plaintext copy of the codes.
+  - [x] Notify the user that recovery codes changed.
+
+Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) exposes the authenticated, rate-limited endpoint with a no-store response. [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) validates the user-bound proof and uses the ASP.NET Core Identity token store as the sole recovery-code store. [`RegenerateRecoveryCodesCommandHandlerTest`](../../ahis.template.test/TestFeatures/AccountFeature/RegenerateRecoveryCodesCommandHandlerTest.cs) covers principal routing and audit behavior without recording recovery-code material. Manual Swagger verification confirmed the login, MFA, step-up, and regeneration flow; the generated codes were returned successfully and the endpoint behavior matched the documented contract.
 
 ### Reset authenticator
 
@@ -334,7 +336,7 @@ Add one row when an item moves beyond backlog status.
 | View active sessions                   | Implemented (metadata deferred) | Approved 2026-09-22 | 2026-09-22 | Authenticated, paginated owner-only listing of active sessions; access-token session claim identifies the current row. Device, IP, and location collection remain deferred pending privacy and retention policy. |
 | Revoke one session                     | Blocked     | —                   | —          | Requires active-session support                                                                                                                                                                                                                                                                                                                                                                         |
 | Security summary                       | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Regenerate recovery codes              | Backlog     | —                   | —          | —                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Regenerate recovery codes              | Implemented | Approved 2026-09-22 | 2026-09-22 | Authenticated step-up-protected regeneration returns recovery codes once, replaces the Identity token-store values, emits a no-store response, and sends a best-effort security notification. |
 | Reset authenticator                    | Implemented | Approved 2026-09-21 | 2026-09-21 | Requires step-up proof and invalidates credentials                                                                                                                                                                                                                                                                                                                                                      |
 | Verified email change                  | Implemented | Approved 2026-09-21 | 2026-09-21 | Uses Identity change-email token and invalidates credentials at confirmation                                                                                                                                                                                                                                                                                                                            |
 | Account deactivation                   | Implemented | Approved 2026-09-21 | 2026-09-21 | Inactive and soft-delete state with no self-service reversal                                                                                                                                                                                                                                                                                                                                            |
