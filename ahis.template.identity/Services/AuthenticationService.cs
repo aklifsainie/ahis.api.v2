@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.WebUtilities;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Security.Claims;
@@ -516,9 +517,274 @@ namespace ahis.template.identity.Services
             return Result.Ok();
         }
 
+        public async Task<Result> StartAccountRecoveryAsync(string email, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+                return Result.Fail("Invalid recovery request.");
+
+            var normalizedEmail = email.Trim().ToUpperInvariant();
+            var throttleSubject = CreateRecoverySubjectHash($"email:{normalizedEmail}");
+            if (throttleSubject is null)
+            {
+                _logger.LogError("Account recovery cannot start because Identity:RecoveryHashKey is not configured.");
+                return Result.Ok();
+            }
+
+            if (!await TryRegisterRecoveryStartAsync(throttleSubject, cancellationToken))
+                return Result.Ok();
+
+            var user = await _userManager.FindByEmailAsync(email.Trim());
+            if (!_tokenState.IsEligible(user) || user is null || !await _userManager.IsEmailConfirmedAsync(user))
+                return Result.Ok();
+
+            var publicClientBaseUrl = _configuration["Identity:PublicClientBaseUrl"];
+            if (string.IsNullOrWhiteSpace(publicClientBaseUrl))
+            {
+                _logger.LogError("Account recovery cannot start because Identity:PublicClientBaseUrl is not configured.");
+                return Result.Ok();
+            }
+
+            var rawChallenge = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+            var now = DateTime.UtcNow;
+            await _context.AccountRecoveryChallenges
+                .Where(challenge => challenge.UserId == user.Id && challenge.ConsumedAt == null && challenge.ExpiresAt > now)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(challenge => challenge.ConsumedAt, now), cancellationToken);
+
+            _context.AccountRecoveryChallenges.Add(new AccountRecoveryChallenge
+            {
+                UserId = user.Id,
+                ChallengeHash = SHA256.HashData(Encoding.UTF8.GetBytes(rawChallenge)),
+                SecurityVersion = _tokenState.GetSecurityVersion(user)!,
+                CreatedAt = now,
+                ExpiresAt = now.AddMinutes(15)
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+
+            var separator = publicClientBaseUrl.EndsWith('/') ? string.Empty : "/";
+            var recoveryLink = $"{publicClientBaseUrl}{separator}account/recovery/complete?challenge={rawChallenge}";
+            try
+            {
+                await _emailSender.SendEmailAsync(
+                    user.Email!,
+                    "Recover your account",
+                    $"Open this secure link to recover your account: {recoveryLink}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Account recovery email delivery failed.");
+            }
+
+            return Result.Ok();
+        }
+
+        public async Task<Result> CompleteAccountRecoveryAsync(
+            string challenge,
+            string newPassword,
+            TwoFactorProviderEnum? twoFactorProvider,
+            string? twoFactorCode,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(challenge) || string.IsNullOrWhiteSpace(newPassword))
+                return Result.Fail("Invalid recovery request.");
+
+            var challengeHash = SHA256.HashData(Encoding.UTF8.GetBytes(challenge));
+            var now = DateTime.UtcNow;
+            var storedChallenge = await _context.AccountRecoveryChallenges
+                .AsNoTracking()
+                .SingleOrDefaultAsync(item => item.ChallengeHash == challengeHash && item.ConsumedAt == null && item.ExpiresAt > now, cancellationToken);
+            if (storedChallenge is null)
+                return Result.Fail("Invalid recovery request.");
+
+            var user = await _userManager.FindByIdAsync(storedChallenge.UserId);
+            if (!_tokenState.Matches(user, storedChallenge.SecurityVersion))
+            {
+                await RegisterFailedRecoveryCompletionAsync(storedChallenge.UserId, cancellationToken);
+                return Result.Fail("Invalid recovery request.");
+            }
+
+            if (!await CanAttemptRecoveryCompletionAsync(storedChallenge.UserId, cancellationToken))
+                return Result.Fail("Invalid recovery request.");
+
+            var failedSecondFactor = false;
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                if (user!.TwoFactorEnabled &&
+                    (string.IsNullOrWhiteSpace(twoFactorCode) || twoFactorProvider is null ||
+                     !await VerifyRecoverySecondFactorAsync(user, twoFactorProvider.Value, twoFactorCode)))
+                {
+                    failedSecondFactor = true;
+                    return Result.Fail("Invalid recovery request.");
+                }
+
+                var claimed = await _context.AccountRecoveryChallenges
+                    .Where(item => item.Id == storedChallenge.Id && item.ConsumedAt == null && item.ExpiresAt > now)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.ConsumedAt, now), cancellationToken);
+                if (claimed != 1)
+                    return Result.Fail("Invalid recovery request.");
+
+                var passwordResult = await _userManager.ResetPasswordAsync(user, await _userManager.GeneratePasswordResetTokenAsync(user), newPassword);
+                if (!passwordResult.Succeeded)
+                {
+                    var errors = passwordResult.Errors
+                        .Select(error => new Error(error.Description).WithMetadata("Field", "password"));
+                    return Result.Fail(errors);
+                }
+
+                var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return Result.Fail("Unable to complete recovery.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Account recovery completion failed for user {UserId}", storedChallenge.UserId);
+                return Result.Fail("Unable to complete recovery.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+                if (failedSecondFactor)
+                    await RegisterFailedRecoveryCompletionAsync(storedChallenge.UserId, cancellationToken);
+            }
+
+            try
+            {
+                await _emailSender.SendEmailAsync(
+                    user.Email!,
+                    "Account recovery completed",
+                    "Your password was reset and all sessions were signed out. Contact support immediately if this was not you.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Account recovery completion notification failed.");
+            }
+
+            return Result.Ok();
+        }
+
 
 
         #region Helpers
+
+        private async Task<bool> VerifyRecoverySecondFactorAsync(
+            ApplicationUser user,
+            TwoFactorProviderEnum provider,
+            string code)
+        {
+            return provider switch
+            {
+                TwoFactorProviderEnum.Authenticator => await _userManager.VerifyTwoFactorTokenAsync(
+                    user, _userManager.Options.Tokens.AuthenticatorTokenProvider, code),
+                TwoFactorProviderEnum.RecoveryCode => (await _userManager.RedeemTwoFactorRecoveryCodeAsync(user, code)).Succeeded,
+                _ => false
+            };
+        }
+
+        private string? CreateRecoverySubjectHash(string subject)
+        {
+            var key = _configuration["Identity:RecoveryHashKey"];
+            if (string.IsNullOrWhiteSpace(key))
+                return null;
+
+            return Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(key), Encoding.UTF8.GetBytes(subject)));
+        }
+
+        private async Task<bool> TryRegisterRecoveryStartAsync(string subjectHash, CancellationToken cancellationToken)
+        {
+            var now = DateTime.UtcNow;
+            var throttle = await _context.AccountRecoveryThrottles.SingleOrDefaultAsync(item => item.SubjectHash == subjectHash, cancellationToken);
+            if (throttle is null)
+            {
+                _context.AccountRecoveryThrottles.Add(new AccountRecoveryThrottle
+                {
+                    SubjectHash = subjectHash,
+                    StartWindowStartedAt = now,
+                    StartCount = 1,
+                    CompletionWindowStartedAt = now,
+                    UpdatedAt = now
+                });
+            }
+            else if (throttle.StartWindowStartedAt <= now.AddHours(-1))
+            {
+                throttle.StartWindowStartedAt = now;
+                throttle.StartCount = 1;
+                throttle.UpdatedAt = now;
+            }
+            else if (throttle.StartCount >= 3)
+            {
+                return false;
+            }
+            else
+            {
+                throttle.StartCount++;
+                throttle.UpdatedAt = now;
+            }
+
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+                return true;
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogWarning(ex, "Account recovery start throttling update conflicted.");
+                return false;
+            }
+        }
+
+        private async Task<bool> CanAttemptRecoveryCompletionAsync(string userId, CancellationToken cancellationToken)
+        {
+            var subjectHash = CreateRecoverySubjectHash($"user:{userId}");
+            if (subjectHash is null)
+                return false;
+
+            var throttle = await _context.AccountRecoveryThrottles.AsNoTracking()
+                .SingleOrDefaultAsync(item => item.SubjectHash == subjectHash, cancellationToken);
+            return throttle is null || throttle.CompletionWindowStartedAt <= DateTime.UtcNow.AddMinutes(-15) || throttle.FailedCompletionCount < 5;
+        }
+
+        private async Task RegisterFailedRecoveryCompletionAsync(string userId, CancellationToken cancellationToken)
+        {
+            var subjectHash = CreateRecoverySubjectHash($"user:{userId}");
+            if (subjectHash is null)
+                return;
+
+            var now = DateTime.UtcNow;
+            var throttle = await _context.AccountRecoveryThrottles.SingleOrDefaultAsync(item => item.SubjectHash == subjectHash, cancellationToken);
+            if (throttle is null)
+            {
+                _context.AccountRecoveryThrottles.Add(new AccountRecoveryThrottle
+                {
+                    SubjectHash = subjectHash,
+                    StartWindowStartedAt = now,
+                    CompletionWindowStartedAt = now,
+                    FailedCompletionCount = 1,
+                    UpdatedAt = now
+                });
+            }
+            else if (throttle.CompletionWindowStartedAt <= now.AddMinutes(-15))
+            {
+                throttle.CompletionWindowStartedAt = now;
+                throttle.FailedCompletionCount = 1;
+                throttle.UpdatedAt = now;
+            }
+            else
+            {
+                throttle.FailedCompletionCount++;
+                throttle.UpdatedAt = now;
+            }
+
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogWarning(ex, "Account recovery completion throttling update conflicted.");
+            }
+        }
 
         private async Task<Result> IssueTwoFactorChallengeAsync(ApplicationUser user)
         {

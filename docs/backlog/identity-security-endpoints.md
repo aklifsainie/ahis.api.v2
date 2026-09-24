@@ -194,17 +194,19 @@ Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.
 
 Recovery is high risk and requires an owner-approved policy covering identity proofing, abuse handling, notifications, and support escalation.
 
-- [ ] `POST /api/account/recovery/start`
-  - [ ] Return the same response whether or not the account exists.
-  - [ ] Apply strict per-IP and per-account rate limits.
-  - [ ] Issue only a short-lived, single-use, purpose-bound recovery challenge.
-  - [ ] Notify the user through already verified channels.
-- [ ] `POST /api/account/recovery/complete`
-  - [ ] Require the approved recovery evidence.
-  - [ ] Prevent bypass of stronger MFA without an explicit recovery policy.
-  - [ ] Reset the affected credential, revoke all sessions, and invalidate access tokens.
-  - [ ] Notify the user of the completed recovery.
-  - [ ] Record sufficient audit evidence without storing secrets.
+- [x] `POST /api/account/recovery/start` (2026-09-22)
+  - [x] Return the same response whether or not the account exists.
+  - [x] Apply strict per-IP and per-account rate limits.
+  - [x] Issue only a short-lived, single-use, purpose-bound recovery challenge.
+  - [x] Notify the user through already verified channels.
+- [x] `POST /api/account/recovery/complete` (2026-09-22)
+  - [x] Require the approved recovery evidence.
+  - [x] Prevent bypass of stronger MFA without an explicit recovery policy.
+  - [x] Reset the affected credential, revoke all sessions, and invalidate access tokens.
+  - [x] Notify the user of the completed recovery.
+  - [x] Record sufficient audit evidence without storing secrets.
+
+Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) exposes anonymous, recovery-rate-limited start and complete actions. [`AuthenticationService`](../../ahis.template.identity/Services/AuthenticationService.cs) stores hashes only, binds each challenge to the current security version, requires authenticator or recovery-code evidence when MFA is enabled, and invalidates sessions after the password update commits. [`AddAccountRecovery`](../../ahis.template.identity/Migrations/20260922081341_AddAccountRecovery.cs) was generated and source-reviewed but has not been applied. Deployment must configure `Identity:PublicClientBaseUrl` and a secret `Identity:RecoveryHashKey`.
 
 ## P2 — Administrative Identity controls
 
@@ -340,7 +342,7 @@ Add one row when an item moves beyond backlog status.
 | Reset authenticator                    | Implemented | Approved 2026-09-21 | 2026-09-21 | Requires step-up proof and invalidates credentials                                                                                                                                                                                                                                                                                                                                                      |
 | Verified email change                  | Implemented | Approved 2026-09-21 | 2026-09-21 | Uses Identity change-email token and invalidates credentials at confirmation                                                                                                                                                                                                                                                                                                                            |
 | Account deactivation                   | Implemented | Approved 2026-09-21 | 2026-09-21 | Inactive and soft-delete state with no self-service reversal                                                                                                                                                                                                                                                                                                                                            |
-| Account recovery                       | Backlog     | —                   | —          | Requires approved recovery policy                                                                                                                                                                                                                                                                                                                                                                       |
+| Account recovery                       | Implemented (deployment pending) | Approved 2026-09-22 | 2026-09-22 | Verified-email challenge plus MFA evidence when enabled; password reset revokes sessions and invalidates access tokens. `AddAccountRecovery` was generated and reviewed, but is not applied. Deployment requires the migration and `Identity:RecoveryHashKey`. |
 | Administrative Identity controls       | Backlog     | —                   | —          | Requires dedicated admin policy                                                                                                                                                                                                                                                                                                                                                                         |
 | User role management                   | Blocked     | —                   | —          | Requires role model decisions and P0 token invalidation                                                                                                                                                                                                                                                                                                                                                 |
 | Passkey/WebAuthn support               | Optional    | —                   | —          | Separate initiative                                                                                                                                                                                                                                                                                                                                                                                     |

@@ -1,5 +1,6 @@
 ﻿using ahis.template.application.Features.AccountFeatures.Commands;
 using ahis.template.application.Features.AccountFeatures.Queries;
+using ahis.template.application.Features.AuthenticationFeatures.Commands;
 using ahis.template.api.Security;
 using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
@@ -66,6 +67,31 @@ namespace ahis.template.api.Controllers.v1
             }
 
             return NoContent(); //NoContent return 204
+        }
+
+        /// <summary>Starts password recovery through the account's verified email address.</summary>
+        [HttpPost("recovery/start")]
+        [AllowAnonymous]
+        [EnableRateLimiting("RecoveryPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> StartRecovery([FromBody] StartAccountRecoveryCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
+        }
+
+        /// <summary>Completes password recovery using the emailed challenge and required MFA evidence.</summary>
+        [HttpPost("recovery/complete")]
+        [AllowAnonymous]
+        [EnableRateLimiting("RecoveryPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> CompleteRecovery([FromBody] CompleteAccountRecoveryCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
         }
 
         /// <summary>

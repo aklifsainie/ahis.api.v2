@@ -15,6 +15,13 @@ namespace ahis.template.identity.Interfaces
         Task<Result> ForgotPasswordAsync(string email, string callbackBaseUrl);
 
         Task<Result> ResetPasswordAsync(string userId, string token, string newPassword);
+        Task<Result> StartAccountRecoveryAsync(string email, CancellationToken cancellationToken);
+        Task<Result> CompleteAccountRecoveryAsync(
+            string challenge,
+            string newPassword,
+            TwoFactorProviderEnum? twoFactorProvider,
+            string? twoFactorCode,
+            CancellationToken cancellationToken);
 
     }
 

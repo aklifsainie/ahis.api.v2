@@ -276,7 +276,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        [EnableRateLimiting("AnonymousAuthPolicy")]
+        [EnableRateLimiting("RecoveryPolicy")]
         public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordCommand command)
         {
             var result = await _mediator.Send(command);
@@ -335,7 +335,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        [EnableRateLimiting("AnonymousAuthPolicy")]
+        [EnableRateLimiting("RecoveryPolicy")]
         public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordCommand command)
         {
             var result = await _mediator.Send(command);

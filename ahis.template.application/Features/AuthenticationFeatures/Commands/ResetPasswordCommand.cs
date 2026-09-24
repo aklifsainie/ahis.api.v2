@@ -1,5 +1,6 @@
 ﻿using ahis.template.application.Shared.Mediator;
 using ahis.template.identity.Interfaces;
+using ahis.template.domain.Enums;
 using FluentResults;
 using System;
 using System.Collections.Generic;
@@ -21,6 +22,10 @@ namespace ahis.template.application.Features.AuthenticationFeatures.Commands
         [Required]
         public string NewPassword { get; set; }
 
+        public TwoFactorProviderEnum? TwoFactorProvider { get; set; }
+
+        public string? TwoFactorCode { get; set; }
+
     }
 
     public class ResetPasswordCommandHandler: IRequestHandler<ResetPasswordCommand, Result>
@@ -36,7 +41,12 @@ namespace ahis.template.application.Features.AuthenticationFeatures.Commands
             ResetPasswordCommand request,
             CancellationToken cancellationToken)
         {
-            var result = await _authenticationService.ResetPasswordAsync(request.UserId, request.Token, request.NewPassword);
+            var result = await _authenticationService.CompleteAccountRecoveryAsync(
+                request.Token,
+                request.NewPassword,
+                request.TwoFactorProvider,
+                request.TwoFactorCode,
+                cancellationToken);
 
             if (!result.IsSuccess)
             {
