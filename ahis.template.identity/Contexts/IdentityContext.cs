@@ -13,6 +13,8 @@ namespace ahis.template.identity.Contexts
 
         public DbSet<RefreshToken> RefreshTokens { get; set; }
         public DbSet<RefreshSession> RefreshSessions { get; set; }
+        public DbSet<AccountRecoveryChallenge> AccountRecoveryChallenges { get; set; }
+        public DbSet<AccountRecoveryThrottle> AccountRecoveryThrottles { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -85,6 +87,24 @@ namespace ahis.template.identity.Contexts
                 b.Property(x => x.IsRevoked).HasDefaultValue(false);
                 b.HasIndex(x => x.PublicId).IsUnique();
                 b.HasIndex(x => new { x.UserId, x.IsRevoked, x.ExpiresAt });
+            });
+
+            builder.Entity<AccountRecoveryChallenge>(b =>
+            {
+                b.ToTable("AccountRecoveryChallenges");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.ChallengeHash).IsRequired().HasColumnType("binary(32)");
+                b.Property(x => x.SecurityVersion).IsRequired().HasMaxLength(64);
+                b.HasIndex(x => x.ChallengeHash).IsUnique();
+                b.HasIndex(x => new { x.UserId, x.ConsumedAt, x.ExpiresAt });
+            });
+
+            builder.Entity<AccountRecoveryThrottle>(b =>
+            {
+                b.ToTable("AccountRecoveryThrottles");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.SubjectHash).IsRequired().HasMaxLength(64);
+                b.HasIndex(x => x.SubjectHash).IsUnique();
             });
         }
     }

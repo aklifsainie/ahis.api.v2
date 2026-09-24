@@ -9,6 +9,7 @@ public sealed class IdentitySessionCleanupService : IIdentitySessionCleanupServi
     private const int BatchSize = 500;
     private static readonly TimeSpan TokenRetention = TimeSpan.FromDays(7);
     private static readonly TimeSpan SessionRetention = TimeSpan.FromDays(30);
+    private static readonly TimeSpan RecoveryThrottleRetention = TimeSpan.FromHours(1);
     private readonly IdentityContext _context;
 
     public IdentitySessionCleanupService(IdentityContext context)
@@ -50,6 +51,34 @@ public sealed class IdentitySessionCleanupService : IIdentitySessionCleanupServi
         {
             await _context.RefreshSessions
                 .Where(session => sessionIds.Contains(session.Id))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+
+        var expiredChallengeIds = await _context.AccountRecoveryChallenges
+            .Where(challenge => challenge.ExpiresAt < now)
+            .OrderBy(challenge => challenge.Id)
+            .Select(challenge => challenge.Id)
+            .Take(BatchSize)
+            .ToListAsync(cancellationToken);
+
+        if (expiredChallengeIds.Count > 0)
+        {
+            await _context.AccountRecoveryChallenges
+                .Where(challenge => expiredChallengeIds.Contains(challenge.Id))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+
+        var staleThrottleIds = await _context.AccountRecoveryThrottles
+            .Where(throttle => throttle.UpdatedAt < now.Subtract(RecoveryThrottleRetention))
+            .OrderBy(throttle => throttle.Id)
+            .Select(throttle => throttle.Id)
+            .Take(BatchSize)
+            .ToListAsync(cancellationToken);
+
+        if (staleThrottleIds.Count > 0)
+        {
+            await _context.AccountRecoveryThrottles
+                .Where(throttle => staleThrottleIds.Contains(throttle.Id))
                 .ExecuteDeleteAsync(cancellationToken);
         }
     }
