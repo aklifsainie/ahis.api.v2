@@ -33,6 +33,7 @@ Use the relevant repository skill in `.agents/skills/`. The repository uses a ri
 - Small local fixes, tests, and documentation changes may proceed when they are within the active authorized request and do not cross a risk boundary.
 - Stop and revise the blueprint when discovery reveals a material scope, contract, schema, security, dependency, or behavior change.
 - Never apply a migration, deploy, publish, push, or mutate an external system without separate explicit authorization.
+- `docs/blueprints/` is the canonical folder for feature blueprints. Each plan uses a new dated filename or revision suffix; approval applies only to the reviewed file revision.
 
 ## Durable implementation and review rules
 

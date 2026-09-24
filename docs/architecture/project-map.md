@@ -12,7 +12,7 @@
 ## Package observations
 
 - Every project targets `net8.0` with nullable reference types enabled.
-- API and Infrastructure reference EF Core 9.0.7; Identity references EF Core 8.0.22.
+- API, Infrastructure, and Identity reference EF Core 8.0.22.
 - Application references FluentResults 4.0.0; Identity references FluentResults 3.11.0.
 - No central package management, `global.json`, `Directory.Build.*`, Docker files, worker projects, or CI workflow were found at bootstrap time.
 
