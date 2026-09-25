@@ -14,9 +14,7 @@ public sealed class IdentityRestrictionService : IIdentityRestrictionService
 
     public async Task<IdentityUserRestriction?> GetEffectiveAsync(string userId, DateTime nowUtc, CancellationToken cancellationToken = default)
     {
-        var active = await _context.IdentityUserRestrictions
-            .Where(x => x.UserId == userId && x.EndedAtUtc == null)
-            .SingleOrDefaultAsync(cancellationToken);
+        var active = await GetActiveAsync(userId, cancellationToken);
         if (active is null)
             return null;
 
@@ -25,6 +23,22 @@ public sealed class IdentityRestrictionService : IIdentityRestrictionService
             return null;
 
         return active;
+    }
+
+    public Task<IdentityUserRestriction?> GetActiveAsync(string userId, CancellationToken cancellationToken = default) =>
+        _context.IdentityUserRestrictions
+            .SingleOrDefaultAsync(x => x.UserId == userId && x.EndedAtUtc == null, cancellationToken);
+
+    public async Task<bool> CloseOrdinaryLockoutAsync(string userId, string endedByUserId, DateTime endedAtUtc, CancellationToken cancellationToken = default)
+    {
+        var changed = await _context.IdentityUserRestrictions
+            .Where(x => x.UserId == userId && x.EndedAtUtc == null &&
+                x.Category == IdentityRestrictionCategory.OrdinaryLockout &&
+                x.ExpiresAtUtc > endedAtUtc)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.EndedAtUtc, endedAtUtc)
+                .SetProperty(x => x.EndedByUserId, endedByUserId), cancellationToken);
+        return changed == 1;
     }
 
     public async Task<bool> IsAuthenticationAllowedAsync(ApplicationUser? user, CancellationToken cancellationToken = default)

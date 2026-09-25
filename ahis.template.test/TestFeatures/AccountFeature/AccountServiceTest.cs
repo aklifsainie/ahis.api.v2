@@ -38,6 +38,7 @@ public class AccountServiceTest
             Mock.Of<ILogger<AccountService>>(),
             Mock.Of<IIdentityTokenStateService>(),
             Mock.Of<IAccountSecurityProofService>(),
+            Mock.Of<IIdentityRestrictionService>(),
             new IdentityUnitOfWork(context),
             context);
 

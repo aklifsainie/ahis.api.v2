@@ -75,7 +75,10 @@ public sealed class AdminIdentityController : BaseApiController
                 return Problem(statusCode: StatusCodes.Status500InternalServerError);
 
             if (result.Errors.Any(error => error is ahis.template.application.Shared.Errors.EntityNotFoundError))
-                return ToActionResult(result);
+                return Problem(
+                    title: "Resource not found",
+                    detail: "Resource not found.",
+                    statusCode: StatusCodes.Status404NotFound);
 
             return ValidationProblem();
         }
@@ -83,6 +86,42 @@ public sealed class AdminIdentityController : BaseApiController
         var actorUserId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (actorUserId == userId)
             RefreshCookie.Clear(Response);
+
+        return NoContent();
+    }
+
+    /// <summary>Clears an active ordinary lockout for an Identity user.</summary>
+    /// <remarks>
+    /// Requires the Superadmin role and a current actor-bound five-minute step-up proof in
+    /// <c>X-Step-Up-Proof</c>. This action cannot unlock the caller and does not disclose the
+    /// target's restriction state.
+    /// </remarks>
+    [HttpPost("{userId}/unlock")]
+    [Authorize(Policy = "IdentityAdminUserUnlockPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> Unlock(string userId, [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof)
+    {
+        var result = await _mediator.Send(
+            new UnlockAdminUserCommand { UserId = userId, StepUpProof = stepUpProof },
+            HttpContext.RequestAborted);
+        Response.Headers.CacheControl = "no-store";
+        if (result.IsFailed)
+        {
+            if (result.Errors.Any(error => error.Metadata.ContainsKey("OperationalFailure")))
+                return Problem(statusCode: StatusCodes.Status500InternalServerError);
+
+            if (result.Errors.Any(error => error is ahis.template.application.Shared.Errors.EntityNotFoundError))
+                return ToActionResult(result);
+
+            return ValidationProblem();
+        }
 
         return NoContent();
     }

@@ -73,6 +73,7 @@ public class RegenerateRecoveryCodesAccountServiceTest
             Mock.Of<ILogger<AccountService>>(),
             tokenState.Object,
             securityProof.Object,
+            Mock.Of<IIdentityRestrictionService>(),
             new IdentityUnitOfWork(context),
             context);
     }

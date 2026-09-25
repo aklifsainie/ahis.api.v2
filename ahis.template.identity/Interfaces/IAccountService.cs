@@ -24,6 +24,11 @@ namespace ahis.template.identity.Interfaces
             string targetUserId,
             string? stepUpProof,
             CancellationToken cancellationToken);
+        Task<Result<AdminUserUnlockOutcome>> UnlockAdminUserAsync(
+            string actorUserId,
+            string targetUserId,
+            string? stepUpProof,
+            CancellationToken cancellationToken);
         Task<Result> RevokeSessionAsync(
             string userId,
             Guid sessionPublicId,
@@ -48,5 +53,12 @@ namespace ahis.template.identity.Interfaces
         Task<Result> DeactivateAsync(string userId, bool confirmation, string stepUpProof, CancellationToken cancellationToken);
         Task<Result> ResendConfirmationEmailAsync(string email, string callbackBaseUrl, CancellationToken cancellationToken);
         Task<Result<AccountMeDto>> GetMyAccountAsync(string userId, CancellationToken cancellationToken);
+    }
+
+    public enum AdminUserUnlockOutcome
+    {
+        TargetNotFound,
+        AlreadyUnlocked,
+        Unlocked
     }
 }

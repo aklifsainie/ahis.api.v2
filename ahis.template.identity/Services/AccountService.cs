@@ -26,6 +26,7 @@ namespace ahis.template.identity.Services
         private readonly ILogger<AccountService> _logger;
         private readonly IIdentityTokenStateService _tokenState;
         private readonly IAccountSecurityProofService _securityProof;
+        private readonly IIdentityRestrictionService _restrictions;
         private readonly IdentityUnitOfWork _unitOfWork;
         private readonly IdentityContext _context;
 
@@ -37,6 +38,7 @@ namespace ahis.template.identity.Services
             ILogger<AccountService> logger,
             IIdentityTokenStateService tokenState,
             IAccountSecurityProofService securityProof,
+            IIdentityRestrictionService restrictions,
             IdentityUnitOfWork unitOfWork,
             IdentityContext context)
         {
@@ -47,6 +49,7 @@ namespace ahis.template.identity.Services
             _logger = logger;
             _tokenState = tokenState;
             _securityProof = securityProof;
+            _restrictions = restrictions;
             _unitOfWork = unitOfWork;
             _context = context;
         }
@@ -528,6 +531,80 @@ namespace ahis.template.identity.Services
             {
                 _logger.LogError(ex, "Administrative session revocation failed for target user {TargetUserId}", targetUserId);
                 return OperationalAdminSessionRevocationFailure();
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result<AdminUserUnlockOutcome>> UnlockAdminUserAsync(
+            string actorUserId,
+            string targetUserId,
+            string? stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(actorUserId) ||
+                string.IsNullOrWhiteSpace(targetUserId) ||
+                actorUserId == targetUserId)
+                return Result.Fail<AdminUserUnlockOutcome>("Unable to unlock user.");
+
+            var actor = await _userManager.FindByIdAsync(actorUserId);
+            if (actor is null ||
+                !await _userManager.IsInRoleAsync(actor, Security.IdentityRoleNames.Superadmin) ||
+                !await _securityProof.IsValidAsync(actorUserId, stepUpProof, cancellationToken))
+                return Result.Fail<AdminUserUnlockOutcome>("Unable to unlock user.");
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var target = await _userManager.FindByIdAsync(targetUserId);
+                if (target is null)
+                    return Result.Ok(AdminUserUnlockOutcome.TargetNotFound);
+
+                var now = DateTime.UtcNow;
+                var restriction = await _restrictions.GetActiveAsync(targetUserId, cancellationToken);
+                if (!target.IsActive || target.IsDeleted || !target.LockoutEnabled)
+                    return Result.Fail<AdminUserUnlockOutcome>("Unable to unlock user.");
+
+                if (restriction is null && target.LockoutEnd is null)
+                    return Result.Ok(AdminUserUnlockOutcome.AlreadyUnlocked);
+
+                if (restriction is null ||
+                    restriction.Category != IdentityRestrictionCategory.OrdinaryLockout ||
+                    !restriction.ExpiresAtUtc.HasValue ||
+                    restriction.ExpiresAtUtc.Value <= now ||
+                    !target.LockoutEnd.HasValue ||
+                    target.LockoutEnd.Value <= now ||
+                    target.LockoutEnd.Value.UtcDateTime != restriction.ExpiresAtUtc.Value)
+                    return Result.Fail<AdminUserUnlockOutcome>("Unable to unlock user.");
+
+                if (!await _restrictions.CloseOrdinaryLockoutAsync(targetUserId, actorUserId, now, cancellationToken))
+                    return OperationalAdminUserUnlockFailure();
+
+                var lockoutResult = await _userManager.SetLockoutEndDateAsync(target, null);
+                if (!lockoutResult.Succeeded)
+                    return OperationalAdminUserUnlockFailure();
+
+                var resetResult = await _userManager.ResetAccessFailedCountAsync(target);
+                if (!resetResult.Succeeded)
+                    return OperationalAdminUserUnlockFailure();
+
+                var invalidation = await _tokenState.InvalidateAsync(target, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return OperationalAdminUserUnlockFailure();
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(
+                    target.Email,
+                    "Account unlocked",
+                    "Your account lockout was cleared. Sign in again to continue.");
+                return Result.Ok(AdminUserUnlockOutcome.Unlocked);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Administrative user unlock failed for target user {TargetUserId}", targetUserId);
+                return OperationalAdminUserUnlockFailure();
             }
             finally
             {
@@ -1067,6 +1144,10 @@ namespace ahis.template.identity.Services
 
         private static Result<bool> OperationalAdminSessionRevocationFailure() =>
             Result.Fail<bool>(new Error("Unable to revoke sessions.")
+                .WithMetadata("OperationalFailure", true));
+
+        private static Result<AdminUserUnlockOutcome> OperationalAdminUserUnlockFailure() =>
+            Result.Fail<AdminUserUnlockOutcome>(new Error("Unable to unlock user.")
                 .WithMetadata("OperationalFailure", true));
 
         private string BuildCallbackUrl(string baseUrl, string path, IDictionary<string, string> query)

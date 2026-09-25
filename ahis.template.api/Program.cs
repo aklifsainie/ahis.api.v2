@@ -119,6 +119,15 @@ namespace ahis.template.api
                         policy.RequireRole(IdentityRoleNames.Superadmin);
                     });
 
+                options.AddPolicy(
+                    "IdentityAdminUserUnlockPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
             });
 
             var app = builder.Build();
