@@ -624,6 +624,44 @@ namespace ahis.template.identity.Services
             });
         }
 
+        public async Task<Result<AdminUserSecurityStateDto>> GetAdminUserSecurityStateAsync(
+            string userId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+                return Result.Fail<AdminUserSecurityStateDto>("A user ID is required.");
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null)
+                return Result.Fail<AdminUserSecurityStateDto>("User not found.");
+
+            var now = DateTime.UtcNow;
+            var authenticatorKey = await _userManager.GetAuthenticatorKeyAsync(user);
+            var recoveryCodeCount = await _userManager.CountRecoveryCodesAsync(user);
+            var activeSessionCount = await _context.RefreshSessions
+                .AsNoTracking()
+                .CountAsync(session =>
+                    session.UserId == userId &&
+                    !session.IsRevoked &&
+                    session.ExpiresAt > now,
+                    cancellationToken);
+
+            return Result.Ok(new AdminUserSecurityStateDto
+            {
+                UserId = user.Id,
+                IsActive = user.IsActive,
+                IsDeleted = user.IsDeleted,
+                IsLockedOut = user.IsLockedOut,
+                EmailConfirmed = user.EmailConfirmed,
+                PhoneConfirmed = user.PhoneNumberConfirmed,
+                PasswordPresent = await _userManager.HasPasswordAsync(user),
+                TwoFactorEnabled = user.TwoFactorEnabled,
+                AuthenticatorConfigured = !string.IsNullOrWhiteSpace(authenticatorKey),
+                RemainingRecoveryCodeCount = recoveryCodeCount,
+                ActiveSessionCount = activeSessionCount
+            });
+        }
+
         public async Task<Result<IEnumerable<string>>> RegenerateRecoveryCodesAsync(
             string userId,
             string stepUpProof,

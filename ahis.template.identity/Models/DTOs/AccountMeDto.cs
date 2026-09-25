@@ -28,6 +28,21 @@ namespace ahis.template.identity.Models.DTOs
         public bool IsCurrent { get; init; }
     }
 
+    public sealed class AdminUserSecurityStateDto
+    {
+        public string UserId { get; set; } = string.Empty;
+        public bool IsActive { get; set; }
+        public bool IsDeleted { get; set; }
+        public bool IsLockedOut { get; set; }
+        public bool EmailConfirmed { get; set; }
+        public bool PhoneConfirmed { get; set; }
+        public bool PasswordPresent { get; set; }
+        public bool TwoFactorEnabled { get; set; }
+        public bool AuthenticatorConfigured { get; set; }
+        public int RemainingRecoveryCodeCount { get; set; }
+        public int ActiveSessionCount { get; set; }
+    }
+
     public sealed class SecuritySummaryDto
     {
         public bool EmailConfirmed { get; init; }

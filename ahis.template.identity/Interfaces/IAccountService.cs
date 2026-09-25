@@ -32,6 +32,7 @@ namespace ahis.template.identity.Interfaces
             int pageSize,
             CancellationToken cancellationToken);
         Task<Result<SecuritySummaryDto>> GetSecuritySummaryAsync(string userId, CancellationToken cancellationToken);
+        Task<Result<AdminUserSecurityStateDto>> GetAdminUserSecurityStateAsync(string userId, CancellationToken cancellationToken);
         Task<Result<IEnumerable<string>>> RegenerateRecoveryCodesAsync(
             string userId,
             string stepUpProof,

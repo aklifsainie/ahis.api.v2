@@ -8,6 +8,7 @@ using ahis.template.identity.Contexts;
 using ahis.template.identity.Services;
 using ahis.template.identity.Models.Entities;
 using ahis.template.identity.Interfaces;
+using ahis.template.identity.Security;
 using ahis.template.infrastructure;
 using ahis.template.infrastructure.Contexts;
 using ahis.template.infrastructure.SharedKernel;
@@ -99,6 +100,14 @@ namespace ahis.template.api
                         policy.RequireClaim(
                             ApiKeyClaimType.Permission,
                             "country.write");
+                    });
+
+                options.AddPolicy(
+                    "IdentityAdminSecurityReadPolicy",
+                    policy =>
+                    {
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
                     });
 
             });
