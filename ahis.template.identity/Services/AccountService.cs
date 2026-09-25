@@ -499,6 +499,42 @@ namespace ahis.template.identity.Services
             }
         }
 
+        public async Task<Result<bool>> RevokeAdminUserSessionsAsync(
+            string actorUserId,
+            string targetUserId,
+            string? stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            // Validate the actor's proof before resolving the target so an invalid proof cannot
+            // reveal whether the requested account exists.
+            if (!await _securityProof.IsValidAsync(actorUserId, stepUpProof, cancellationToken))
+                return Result.Fail<bool>("Unable to revoke sessions.");
+
+            var target = await _userManager.FindByIdAsync(targetUserId);
+            if (target is null)
+                return Result.Ok(false);
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var invalidation = await _tokenState.InvalidateAsync(target, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return OperationalAdminSessionRevocationFailure();
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                return Result.Ok(true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Administrative session revocation failed for target user {TargetUserId}", targetUserId);
+                return OperationalAdminSessionRevocationFailure();
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
         public async Task<Result> RevokeSessionAsync(
             string userId,
             Guid sessionPublicId,
@@ -1025,6 +1061,10 @@ namespace ahis.template.identity.Services
 
         private static Result OperationalSessionRevocationFailure() =>
             Result.Fail(new Error("Unable to revoke sessions.")
+                .WithMetadata("OperationalFailure", true));
+
+        private static Result<bool> OperationalAdminSessionRevocationFailure() =>
+            Result.Fail<bool>(new Error("Unable to revoke sessions.")
                 .WithMetadata("OperationalFailure", true));
 
         private string BuildCallbackUrl(string baseUrl, string path, IDictionary<string, string> query)

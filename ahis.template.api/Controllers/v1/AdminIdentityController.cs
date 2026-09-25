@@ -1,4 +1,6 @@
+using ahis.template.application.Features.AccountFeatures.Commands;
 using ahis.template.application.Features.AccountFeatures.Queries;
+using ahis.template.api.Security;
 using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
 using ahis.template.domain.Models.ViewModels.AccountVM;
@@ -41,5 +43,47 @@ public sealed class AdminIdentityController : BaseApiController
 
         Response.Headers.CacheControl = "no-store";
         return ToActionResult(result);
+    }
+
+    /// <summary>Revokes all access and refresh sessions for an Identity user.</summary>
+    /// <remarks>
+    /// Requires the Superadmin role and a current actor-bound five-minute step-up proof in
+    /// <c>X-Step-Up-Proof</c>. This action returns no target data, sends no notification, and
+    /// clears the caller's refresh cookie only when the caller revokes their own sessions.
+    /// </remarks>
+    [HttpPost("{userId}/revoke-sessions")]
+    [Authorize(Policy = "IdentityAdminSessionRevocationPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> RevokeSessions(
+        string userId,
+        [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof)
+    {
+        var result = await _mediator.Send(
+            new RevokeAdminUserSessionsCommand { UserId = userId, StepUpProof = stepUpProof },
+            HttpContext.RequestAborted);
+        Response.Headers.CacheControl = "no-store";
+        if (result.IsFailed)
+        {
+            if (result.Errors.Any(error => error.Metadata.ContainsKey("OperationalFailure")))
+                return Problem(statusCode: StatusCodes.Status500InternalServerError);
+
+            if (result.Errors.Any(error => error is ahis.template.application.Shared.Errors.EntityNotFoundError))
+                return ToActionResult(result);
+
+            return ValidationProblem();
+        }
+
+        var actorUserId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (actorUserId == userId)
+            RefreshCookie.Clear(Response);
+
+        return NoContent();
     }
 }

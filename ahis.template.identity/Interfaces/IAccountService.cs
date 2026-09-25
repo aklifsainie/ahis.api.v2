@@ -19,6 +19,11 @@ namespace ahis.template.identity.Interfaces
         Task<Result> ChangePasswordAsync(string userId, string currentPassword, string newPassword, CancellationToken cancellationToken);
         Task<Result<string>> ReauthenticateAsync(string userId, string password, string? twoFactorCode, CancellationToken cancellationToken);
         Task<Result> RevokeAllSessionsAsync(string userId, string stepUpProof, CancellationToken cancellationToken);
+        Task<Result<bool>> RevokeAdminUserSessionsAsync(
+            string actorUserId,
+            string targetUserId,
+            string? stepUpProof,
+            CancellationToken cancellationToken);
         Task<Result> RevokeSessionAsync(
             string userId,
             Guid sessionPublicId,
