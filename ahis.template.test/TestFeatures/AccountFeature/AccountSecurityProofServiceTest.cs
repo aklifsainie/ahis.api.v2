@@ -18,7 +18,7 @@ public class AccountSecurityProofServiceTest
         var user = new ApplicationUser { Id = "user-1", SecurityStamp = "security-stamp" };
         var tokenState = new Mock<IIdentityTokenStateService>();
         tokenState.Setup(service => service.GetSecurityVersion(user)).Returns("version-1");
-        tokenState.Setup(service => service.ValidateAsync(user.Id, "version-1")).ReturnsAsync(true);
+        tokenState.Setup(service => service.ValidateAsync(user.Id, "version-1", It.IsAny<CancellationToken>())).ReturnsAsync(true);
         var service = CreateService(tokenState.Object);
 
         var proof = await service.CreateAsync(user);

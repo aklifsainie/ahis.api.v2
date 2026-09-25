@@ -12,11 +12,13 @@ public sealed class IdentityTokenStateService : IIdentityTokenStateService
 {
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IdentityContext _context;
+    private readonly IIdentityRestrictionService _restrictions;
 
-    public IdentityTokenStateService(UserManager<ApplicationUser> userManager, IdentityContext context)
+    public IdentityTokenStateService(UserManager<ApplicationUser> userManager, IdentityContext context, IIdentityRestrictionService restrictions)
     {
         _userManager = userManager;
         _context = context;
+        _restrictions = restrictions;
     }
 
     public string? GetSecurityVersion(ApplicationUser user) =>
@@ -41,13 +43,20 @@ public sealed class IdentityTokenStateService : IIdentityTokenStateService
             Convert.FromHexString(presentedVersion), Convert.FromHexString(currentVersion));
     }
 
-    public async Task<bool> ValidateAsync(string? userId, string? presentedVersion)
+    public async Task<bool> MatchesAsync(ApplicationUser? user, string? presentedVersion, CancellationToken cancellationToken = default)
+    {
+        if (!Matches(user, presentedVersion))
+            return false;
+        return await _restrictions.IsAuthenticationAllowedAsync(user, cancellationToken);
+    }
+
+    public async Task<bool> ValidateAsync(string? userId, string? presentedVersion, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(presentedVersion))
             return false;
 
         var user = await _userManager.FindByIdAsync(userId);
-        return Matches(user, presentedVersion);
+        return await MatchesAsync(user, presentedVersion, cancellationToken);
     }
 
     public async Task<bool> ValidateSessionAsync(

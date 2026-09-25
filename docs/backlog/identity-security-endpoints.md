@@ -6,7 +6,7 @@ This document tracks proposed security work for user identity, authentication, s
 
 This is a backlog, not an approved implementation blueprint. Any item that changes a public API, authorization, security behavior, Identity persistence, schema, dependencies, or production configuration requires an approved change blueprint before implementation.
 
-Last reviewed against source: 2026-09-22.
+Last reviewed against source: 2026-09-25.
 
 ## Ownership boundary
 
@@ -60,6 +60,7 @@ These should be addressed before exposing broader session-management or recovery
 - [x] Include a SecurityStamp-derived version in issued access tokens and validate it on authenticated requests.
 - [x] Make existing password change, password reset, MFA disable, and internal revoke-all/replay handling invalidate existing access tokens and refresh tokens.
 - [x] Require the same invalidation in MFA-reset, email-change, and account-deactivation workflows.
+- [x] Record authoritative Identity restriction provenance and deny holds or unclassified legacy restrictions across login, refresh, bearer, two-factor, and step-up validation (2026-09-25; migration generated and source-reviewed, not applied). Administrative hold placement, release, and legacy classification remain internal-only pending their separately approved operation/endpoints.
 - [x] Apply the same active, deleted, lockout, and security-version checks during refresh-token rotation.
 - [x] Adopt immediate access-token revocation through per-request version validation.
 

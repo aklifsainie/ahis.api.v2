@@ -10,7 +10,7 @@ Authentication owns password login, 2FA completion, JWT issuance, refresh rotati
 - Successful refresh rotates a hash-addressed token in its random-public-ID session and records a parent relationship. It requires the session to remain active before it stores the replacement token. Revoked-token reuse bulk-revokes active tokens and sessions; logout revokes the current session and is non-failing for unusable supplied tokens.
 - Password reset updates the Identity security stamp. Forgot-password and confirmation-resend responses return the same success result for every syntactically valid email.
 - The legacy `forgot-password` and `reset-password` routes are one-release aliases for the account recovery flow. Recovery links use the configured public client origin, expire after 15 minutes, and are single-use. Start requests are throttled per IP and hashed account identifier; completion requires MFA evidence when MFA is enabled.
-- Bearer validation now rejects missing security-version or access-token-use claims and inactive, deleted, locked-out, or security-version-mismatched users. Refresh rotation applies the same checks; refresh records without a version are rejected. Step-up proofs use the same signing configuration but carry a distinct token-use claim and cannot authenticate API requests.
+- Bearer validation, refresh rotation, two-factor completion, and step-up proof validation now also consult Identity restriction provenance. An active Administrative/Security Hold or `LegacyUnclassified` row denies access regardless of `LockoutEnd`; unavailable or mismatched provenance denies access. Password-failure lockouts write an `OrdinaryLockout` provenance row in the Identity transaction. No hold-management route is included.
 
 ## Risks and exceptions
 

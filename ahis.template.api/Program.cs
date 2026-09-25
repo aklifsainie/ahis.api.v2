@@ -345,7 +345,7 @@ namespace ahis.template.api
                             ? parsedSessionId
                             : (Guid?)null;
                         if (tokenUse != IIdentityTokenStateService.AccessTokenUse ||
-                            !await tokenState.ValidateAsync(userId, version) ||
+                            !await tokenState.ValidateAsync(userId, version, context.HttpContext.RequestAborted) ||
                             !await tokenState.ValidateSessionAsync(userId, sessionId, context.HttpContext.RequestAborted))
                             context.Fail("Invalid bearer token");
                     }

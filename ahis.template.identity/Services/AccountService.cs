@@ -682,12 +682,14 @@ namespace ahis.template.identity.Services
                     session.ExpiresAt > now,
                     cancellationToken);
 
+            var effectiveRestriction = await new IdentityRestrictionService(_context)
+                .GetEffectiveAsync(user.Id, DateTime.UtcNow, cancellationToken);
             return Result.Ok(new AdminUserSecurityStateDto
             {
                 UserId = user.Id,
                 IsActive = user.IsActive,
                 IsDeleted = user.IsDeleted,
-                IsLockedOut = user.IsLockedOut,
+                IsLockedOut = effectiveRestriction is not null,
                 EmailConfirmed = user.EmailConfirmed,
                 PhoneConfirmed = user.PhoneNumberConfirmed,
                 PasswordPresent = await _userManager.HasPasswordAsync(user),

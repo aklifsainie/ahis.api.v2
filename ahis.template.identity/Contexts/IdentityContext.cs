@@ -15,6 +15,7 @@ namespace ahis.template.identity.Contexts
         public DbSet<RefreshSession> RefreshSessions { get; set; }
         public DbSet<AccountRecoveryChallenge> AccountRecoveryChallenges { get; set; }
         public DbSet<AccountRecoveryThrottle> AccountRecoveryThrottles { get; set; }
+        public DbSet<IdentityUserRestriction> IdentityUserRestrictions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -105,6 +106,29 @@ namespace ahis.template.identity.Contexts
                 b.HasKey(x => x.Id);
                 b.Property(x => x.SubjectHash).IsRequired().HasMaxLength(64);
                 b.HasIndex(x => x.SubjectHash).IsUnique();
+            });
+
+            builder.Entity<IdentityUserRestriction>(b =>
+            {
+                b.ToTable("IdentityUserRestrictions");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.UserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.Category).IsRequired();
+                b.Property(x => x.StartedAtUtc).IsRequired();
+                b.Property(x => x.Origin).IsRequired().HasMaxLength(100);
+                b.Property(x => x.PlacedByUserId).HasMaxLength(450);
+                b.Property(x => x.EndedByUserId).HasMaxLength(450);
+                b.Property(x => x.ReviewedByUserId).HasMaxLength(450);
+                b.Property(x => x.EvidenceReference).HasMaxLength(500);
+                b.Property(x => x.InternalReasonCode).HasMaxLength(100);
+                b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+                b.HasIndex(x => x.UserId).HasFilter("[EndedAtUtc] IS NULL").IsUnique();
+                b.HasIndex(x => new { x.UserId, x.StartedAtUtc });
+                b.HasIndex(x => new { x.Category, x.EndedAtUtc });
+                b.ToTable(t => t.HasCheckConstraint("CK_IdentityUserRestrictions_CategoryExpiry",
+                    "([Category] = 1 AND [ExpiresAtUtc] IS NOT NULL) OR ([Category] IN (2, 3) AND [ExpiresAtUtc] IS NULL)"));
+                b.ToTable(t => t.HasCheckConstraint("CK_IdentityUserRestrictions_EndConsistency",
+                    "[EndedAtUtc] IS NULL OR [EndedAtUtc] >= [StartedAtUtc]"));
             });
         }
     }

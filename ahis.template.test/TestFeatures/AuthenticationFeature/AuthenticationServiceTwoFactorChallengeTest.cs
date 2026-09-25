@@ -106,6 +106,10 @@ public class AuthenticationServiceTwoFactorChallengeTest
             ["Jwt:RefreshTokenExpiryDays"] = "30"
         }).Build();
 
+        var restrictions = new Mock<IIdentityRestrictionService>();
+        restrictions.Setup(service => service.IsAuthenticationAllowedAsync(It.IsAny<ApplicationUser?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
         return new IdentityAuthenticationService(
             userManager,
             signInManager,
@@ -115,6 +119,7 @@ public class AuthenticationServiceTwoFactorChallengeTest
             configuration,
             Mock.Of<ILogger<IdentityAuthenticationService>>(),
             tokenState,
+            restrictions.Object,
             new HttpContextAccessor { HttpContext = context });
     }
 

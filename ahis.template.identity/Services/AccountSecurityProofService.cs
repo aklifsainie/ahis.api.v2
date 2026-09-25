@@ -75,7 +75,7 @@ public sealed class AccountSecurityProofService : IAccountSecurityProofService
             var version = principal.FindFirstValue(IIdentityTokenStateService.SecurityVersionClaim);
             var purpose = principal.FindFirstValue(PurposeClaim);
             return proofUserId == userId && purpose == Purpose &&
-                await _tokenState.ValidateAsync(userId, version);
+                await _tokenState.ValidateAsync(userId, version, cancellationToken);
         }
         catch (SecurityTokenException)
         {

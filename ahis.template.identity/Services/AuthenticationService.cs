@@ -32,6 +32,7 @@ namespace ahis.template.identity.Services
         private readonly IConfiguration _configuration;
         private readonly ILogger<AuthenticationService> _logger;
         private readonly IIdentityTokenStateService _tokenState;
+        private readonly IIdentityRestrictionService _restrictions;
         private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor _httpContextAccessor;
 
         public AuthenticationService(
@@ -43,6 +44,7 @@ namespace ahis.template.identity.Services
             IConfiguration configuration,
             ILogger<AuthenticationService> logger,
             IIdentityTokenStateService tokenState,
+            IIdentityRestrictionService restrictions,
             Microsoft.AspNetCore.Http.IHttpContextAccessor httpContextAccessor)
         {
             _userManager = userManager;
@@ -53,6 +55,7 @@ namespace ahis.template.identity.Services
             _configuration = configuration;
             _logger = logger;
             _tokenState = tokenState;
+            _restrictions = restrictions;
             _httpContextAccessor = httpContextAccessor;
         }
 
@@ -66,7 +69,7 @@ namespace ahis.template.identity.Services
                 if (user == null)
                     return Result.Fail<AuthenticationResponseVM>("Invalid credentials.");
 
-                if (!_tokenState.IsEligible(user))
+                if (!await _restrictions.IsAuthenticationAllowedAsync(user))
                     return Result.Fail<AuthenticationResponseVM>("User is not active.");
 
 
@@ -79,10 +82,18 @@ namespace ahis.template.identity.Services
                 if (!signInResult.Succeeded)
                 {
                     if (signInResult.IsLockedOut)
+                    {
+                        await _unitOfWork.BeginTransactionAsync();
+                        if (!await _restrictions.EnsureOrdinaryLockoutAsync(user))
+                            return Result.Fail<AuthenticationResponseVM>("Login failed.");
+                        await _unitOfWork.SaveChangesAsync();
+                        await _unitOfWork.CommitTransactionAsync();
                         return Result.Fail<AuthenticationResponseVM>("User is locked out.");
+                    }
 
                     if (signInResult.RequiresTwoFactor)
                     {
+                        await _unitOfWork.CommitTransactionAsync();
                         var challengeResult = await IssueTwoFactorChallengeAsync(user);
                         return challengeResult.IsSuccess
                             ? Result.Ok(new AuthenticationResponseVM
@@ -107,6 +118,8 @@ namespace ahis.template.identity.Services
                 // persist refresh token
 
                 await _unitOfWork.BeginTransactionAsync();
+                if (!await _restrictions.IsAuthenticationAllowedAsync(user))
+                    return Result.Fail<AuthenticationResponseVM>("Login failed.");
 
                 var sessionPublicId = await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
 
@@ -235,7 +248,7 @@ namespace ahis.template.identity.Services
                     return Result.Fail("Invalid refresh token.");
 
                 var user = await _userManager.FindByIdAsync(storedToken.UserId);
-                if (!_tokenState.Matches(user, storedToken.SecurityVersion))
+                if (!await _tokenState.MatchesAsync(user, storedToken.SecurityVersion, cancellationToken))
                     return Result.Fail("Invalid refresh token.");
 
                 var securityVersion = _tokenState.GetSecurityVersion(user!);
@@ -331,13 +344,13 @@ namespace ahis.template.identity.Services
                 var user = await _signInManager.GetTwoFactorAuthenticationUserAsync();
                 if (user is null || string.IsNullOrWhiteSpace(challengeUserId) ||
                     !string.Equals(challengeUserId, user.Id, StringComparison.Ordinal) ||
-                    !_tokenState.Matches(user, challengeVersion))
+                    !await _tokenState.MatchesAsync(user, challengeVersion))
                 {
                     await ClearTwoFactorChallengeAsync();
                     return Result.Fail("Invalid or expired two-factor challenge.");
                 }
 
-                if (!_tokenState.IsEligible(user) || !user.TwoFactorEnabled)
+                if (!await _restrictions.IsAuthenticationAllowedAsync(user) || !user.TwoFactorEnabled)
                 {
                     await ClearTwoFactorChallengeAsync();
                     return Result.Fail("Two-factor authentication is not enabled.");
@@ -367,6 +380,10 @@ namespace ahis.template.identity.Services
 
                 if (signInResult.IsLockedOut)
                 {
+                    if (!await _restrictions.EnsureOrdinaryLockoutAsync(user))
+                        return Result.Fail("Verify 2FA failed.");
+                    await _unitOfWork.SaveChangesAsync();
+                    await _unitOfWork.CommitTransactionAsync();
                     await ClearTwoFactorChallengeAsync();
                     return Result.Fail("Account is locked.");
                 }
@@ -381,6 +398,9 @@ namespace ahis.template.identity.Services
                 if (securityVersion is null)
                     return Result.Fail("Verify 2FA failed.");
                 var (refreshToken, refreshExpiresAt) = GenerateRefreshToken();
+
+                if (!await _restrictions.IsAuthenticationAllowedAsync(user))
+                    return Result.Fail("Verify 2FA failed.");
 
                 var sessionPublicId = await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
                 var accessToken = await GenerateJwtTokenAsync(user, securityVersion, sessionPublicId);
