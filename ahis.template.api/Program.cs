@@ -29,7 +29,7 @@ namespace ahis.template.api
 {
     public class Program
     {
-        public static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
 
@@ -48,6 +48,8 @@ namespace ahis.template.api
             builder.Services.AddInfrastructure();
             builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseSqlServer(connectionString));
             builder.Services.AddIdentityServices(connectionString);
+            builder.Services.Configure<IdentityRoleBootstrapOptions>(
+                builder.Configuration.GetSection(IdentityRoleBootstrapOptions.SectionName));
             builder.Services.AddControllers();
             builder.Services.AddEndpointsApiExplorer();
             ConfigureSwagger(builder.Services, builder.Configuration);
@@ -128,9 +130,42 @@ namespace ahis.template.api
                         policy.RequireRole(IdentityRoleNames.Superadmin);
                     });
 
+                options.AddPolicy(
+                    "IdentityRoleReadPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
+                    "IdentityRoleManagementPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
+                    "IdentityRoleAssignmentPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
             });
 
             var app = builder.Build();
+
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var bootstrap = scope.ServiceProvider.GetRequiredService<IIdentityRoleBootstrapService>();
+                await bootstrap.InitializeAsync();
+            }
 
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())

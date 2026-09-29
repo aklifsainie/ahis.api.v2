@@ -16,6 +16,7 @@ namespace ahis.template.identity.Contexts
         public DbSet<AccountRecoveryChallenge> AccountRecoveryChallenges { get; set; }
         public DbSet<AccountRecoveryThrottle> AccountRecoveryThrottles { get; set; }
         public DbSet<IdentityUserRestriction> IdentityUserRestrictions { get; set; }
+        public DbSet<IdentityRoleBootstrapState> IdentityRoleBootstrapStates { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -129,6 +130,22 @@ namespace ahis.template.identity.Contexts
                     "([Category] = 1 AND [ExpiresAtUtc] IS NOT NULL) OR ([Category] IN (2, 3) AND [ExpiresAtUtc] IS NULL)"));
                 b.ToTable(t => t.HasCheckConstraint("CK_IdentityUserRestrictions_EndConsistency",
                     "[EndedAtUtc] IS NULL OR [EndedAtUtc] >= [StartedAtUtc]"));
+            });
+
+            builder.Entity<IdentityRoleBootstrapState>(b =>
+            {
+                b.ToTable("IdentityRoleBootstrapState", table =>
+                    table.HasCheckConstraint(
+                        "CK_IdentityRoleBootstrapState_Singleton",
+                        "[Id] = 1"));
+                b.HasKey(x => x.Id);
+                b.Property(x => x.Id).ValueGeneratedNever();
+                b.Property(x => x.TargetUserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.CompletedAtUtc).IsRequired();
+                b.HasOne<ApplicationUser>()
+                    .WithMany()
+                    .HasForeignKey(x => x.TargetUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
         }
     }

@@ -340,6 +340,29 @@ namespace ahis.template.identity.Migrations
                     b.ToTable("IdentityUsers", (string)null);
                 });
 
+            modelBuilder.Entity("ahis.template.identity.Models.Entities.IdentityRoleBootstrapState", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("TargetUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TargetUserId");
+
+                    b.ToTable("IdentityRoleBootstrapState", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_IdentityRoleBootstrapState_Singleton", "[Id] = 1");
+                        });
+                });
+
             modelBuilder.Entity("ahis.template.identity.Models.Entities.IdentityUserRestriction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -562,6 +585,15 @@ namespace ahis.template.identity.Migrations
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ahis.template.identity.Models.Entities.IdentityRoleBootstrapState", b =>
+                {
+                    b.HasOne("ahis.template.identity.Models.Entities.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("TargetUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

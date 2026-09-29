@@ -10,6 +10,8 @@ Refresh tokens are stored in `IdentityContext` only as SHA-256 hashes. Each comp
 
 API keys arrive in `X-API-Key`, are compared as SHA-256 hashes, and are eligible only when key and client status permit. Failures intentionally conceal the reason. Raw values are returned only during creation and must never be persisted or logged.
 
+The initial human-user RBAC catalog contains protected `Superadmin` and `User` roles. The API creates these roles at startup through `RoleManager<IdentityRole>`. A one-time first Superadmin bootstrap can run only when `Identity:Bootstrap:SuperadminEmail` identifies one existing active, confirmed, unrestricted account and no durable bootstrap marker or Superadmin assignment exists. The marker records the target user ID and completion time in `IdentityContext`; all other bootstrap states fail startup for operator reconciliation. The bootstrap target's security version and sessions are invalidated before the marker commits. Deploy the marker migration before setting this configuration, then remove the configuration after successful startup. Human-user role-management routes remain pending their separate approved blueprint.
+
 Configured policies are not necessarily applied. Country permission policies exist but are not attached to Country actions; API-client administration lacks explicit authorization; and audit queries require authentication but lack a dedicated role/permission policy. API-client `RateLimitPerMinute` is stored but not enforced. These are risks, not patterns to reproduce.
 
 Documentation and logs may name configuration keys but must never include secret values.
