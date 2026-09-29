@@ -88,13 +88,14 @@ Content-Type: application/json
   "contactEmail": "test.operator@example.test",
   "rateLimitPerMinute": 2,
   "initialKeyName": "Initial test key",
-  "keyExpiresAt": "<optional-future-UTC-ISO-8601-date>",
   "permissions": [
     "country.read",
     "country.write"
   ]
 }
 ```
+
+`keyExpiresAt` is optional. Leave it out as shown for a non-expiring test key, or add a real future UTC value such as `"keyExpiresAt": "2027-12-31T23:59:59Z"`. Do not send the angle-bracket placeholder as JSON; it is documentation text, not a DateTime.
 
 Expected result: `201 Created` and `Cache-Control: no-store`. Save these response fields immediately in the local secure test environment:
 
@@ -171,10 +172,11 @@ X-Step-Up-Proof: <step-up-proof>
 Content-Type: application/json
 
 {
-  "keyName": "Rotation test key",
-  "expiresAt": "<optional-future-UTC-ISO-8601-date>"
+  "keyName": "Rotation test key"
 }
 ```
+
+`expiresAt` is also optional. To set it, add a real future UTC value such as `"expiresAt": "2027-12-31T23:59:59Z"`.
 
 Expected result: `201 Created`. Save the returned `keyId` and raw `apiKey` only long enough to verify that both the old and new keys can call the permitted Country endpoint.
 
