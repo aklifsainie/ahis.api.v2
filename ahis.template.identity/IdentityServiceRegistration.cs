@@ -28,6 +28,7 @@ namespace ahis.template.identity
             services.AddScoped<IIdentitySessionCleanupService, IdentitySessionCleanupService>();
             services.AddScoped<IAccountSecurityProofService, AccountSecurityProofService>();
             services.AddScoped<IIdentityRoleBootstrapService, IdentityRoleBootstrapService>();
+            services.AddScoped<IIdentityRoleManagementService, IdentityRoleManagementService>();
             services.AddScoped<IdentityUnitOfWork>();
            
 

@@ -1,9 +1,12 @@
 using ahis.template.application.Features.AccountFeatures.Commands;
 using ahis.template.application.Features.AccountFeatures.Queries;
+using ahis.template.application.Features.IdentityRoleManagementFeatures;
 using ahis.template.api.Security;
 using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
 using ahis.template.domain.Models.ViewModels.AccountVM;
+using ahis.template.domain.Models.ViewModels.IdentityRoleVM;
+using FluentResults;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -125,4 +128,42 @@ public sealed class AdminIdentityController : BaseApiController
 
         return NoContent();
     }
+
+    /// <summary>Gets direct Identity-role assignments for a user.</summary>
+    [HttpGet("{userId}/roles")]
+    [Authorize(Policy = "IdentityRoleReadPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+    [ProducesResponseType(typeof(ResponseDto<List<AdminUserRoleVM>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetRoles(string userId)
+    {
+        var result = await _mediator.Send(new GetUserRolesQuery { UserId = userId }, HttpContext.RequestAborted);
+        Response.Headers.CacheControl = "no-store";
+        return result.IsSuccess ? Ok(new ResponseDto<List<AdminUserRoleVM>>(result.Value)) : RoleError(result.Errors);
+    }
+
+    /// <summary>Replaces a user's complete direct Identity-role assignment set.</summary>
+    [HttpPut("{userId}/roles")]
+    [Authorize(Policy = "IdentityRoleAssignmentPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> ReplaceRoles(string userId, [FromBody] RoleIdsBody body,
+        [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof)
+    {
+        var result = await _mediator.Send(new ReplaceUserRolesCommand
+        { UserId = userId, RoleIds = body?.RoleIds, StepUpProof = stepUpProof }, HttpContext.RequestAborted);
+        Response.Headers.CacheControl = "no-store";
+        return result.IsSuccess ? NoContent() : RoleError(result);
+    }
+
+    private IActionResult RoleError(Result result) => RoleError(result.Errors);
+    private IActionResult RoleError(IEnumerable<IError> errors)
+    {
+        var error = errors.First();
+        if (error.Metadata.ContainsKey("NotFound")) return Problem(statusCode: StatusCodes.Status404NotFound);
+        if (error.Metadata.ContainsKey("Conflict")) return Problem(statusCode: StatusCodes.Status409Conflict);
+        if (error.Metadata.ContainsKey("Validation")) return ValidationProblem(statusCode: StatusCodes.Status400BadRequest);
+        return Problem(statusCode: StatusCodes.Status500InternalServerError);
+    }
+
+    public sealed class RoleIdsBody { public IReadOnlyCollection<string>? RoleIds { get; init; } }
 }
