@@ -7,6 +7,7 @@ using ahis.template.domain.Models.ViewModels.IdentityRoleVM;
 using ahis.template.identity.Interfaces;
 using FluentResults;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace ahis.template.application.Features.IdentityRoleManagementFeatures;
 public sealed class GetRolesQuery : IRequest<Result<PagedResult<List<AdminRoleListItemVM>>>> { public string? Name {get;init;} public int PageNumber {get;init;}=1; public int PageSize {get;init;}=20; }
@@ -27,10 +28,11 @@ public sealed class IdentityRoleManagementHandler : IRequestHandler<GetRolesQuer
  public async Task<Result<AdminRoleDetailVM>> Handle(RenameRoleCommand r,CancellationToken ct)=>await Change(async()=>await _service.RenameRoleAsync(_current.UserId??string.Empty,r.StepUpProof,r.RoleId,r.ETag,r.Name,ct),"RoleRenamed",r.RoleId);
  public async Task<Result> Handle(DeleteRoleCommand r,CancellationToken ct)=>await ChangeVoid(async()=>await _service.DeleteRoleAsync(_current.UserId??string.Empty,r.StepUpProof,r.RoleId,ct),"RoleDeleted",r.RoleId);
  public async Task<Result<List<AdminUserRoleVM>>> Handle(GetUserRolesQuery r,CancellationToken ct){var x=await _service.GetUserRolesAsync(r.UserId,ct);return x.IsFailed?Result.Fail<List<AdminUserRoleVM>>(x.Errors):Result.Ok(x.Value.Select(v=>new AdminUserRoleVM(v.Id,v.Name,v.IsProtected)).ToList());}
- public async Task<Result> Handle(ReplaceUserRolesCommand r,CancellationToken ct)=>await ChangeVoid(async()=>await _service.ReplaceUserRolesAsync(_current.UserId??string.Empty,r.StepUpProof,r.UserId,r.RoleIds,ct),"UserRolesReplaced",r.UserId);
+ public async Task<Result> Handle(ReplaceUserRolesCommand r,CancellationToken ct){var x=await _service.ReplaceUserRolesAsync(_current.UserId??string.Empty,r.StepUpProof,r.UserId,r.RoleIds,ct);if(x.IsFailed)return Result.Fail(x.Errors);if(x.Value.Changed)await AuditRoleReplacement(r.UserId,x.Value.AddedRoleIds,x.Value.RemovedRoleIds);return Result.Ok();}
  public async Task<Result<PagedResult<List<AdminRoleUserVM>>>> Handle(GetRoleUsersQuery r,CancellationToken ct){var x=await _service.GetRoleUsersAsync(r.RoleId,Math.Max(1,r.PageNumber),Math.Clamp(r.PageSize,1,100),ct);return x.IsFailed?Result.Fail<PagedResult<List<AdminRoleUserVM>>>(x.Errors):Result.Ok(new PagedResult<List<AdminRoleUserVM>>(x.Value.Items.Select(v=>new AdminRoleUserVM(v.UserId,v.Username)).ToList(),x.Value.TotalCount,x.Value.PageNumber,x.Value.PageSize));}
  private static Result<AdminRoleDetailVM> MapDetail(FluentResults.Result<ahis.template.identity.Models.DTOs.IdentityRoleDetailDto> x)=>x.IsFailed?Result.Fail<AdminRoleDetailVM>(x.Errors):Result.Ok(new AdminRoleDetailVM(x.Value.Id,x.Value.Name,x.Value.IsProtected,x.Value.AssignmentCount,[],x.Value.ETag));
  private async Task<Result<AdminRoleDetailVM>> Change(Func<Task<FluentResults.Result<ahis.template.identity.Models.DTOs.IdentityRoleDetailDto>>> work,string action,string id){var x=await work();if(x.IsFailed)return MapDetail(x);await Audit(action,id);return MapDetail(x);}
  private async Task<Result> ChangeVoid(Func<Task<FluentResults.Result>> work,string action,string id){var x=await work();if(x.IsSuccess)await Audit(action,id);return x;}
+ private async Task AuditRoleReplacement(string userId,IReadOnlyList<string> addedRoleIds,IReadOnlyList<string> removedRoleIds){var metadata=JsonSerializer.Serialize(new { action="UserRolesReplaced", addedRoleIds, removedRoleIds });try{await _audit.LogAsync(AuditActionEnum.Update,"IdentityRoleManagement",userId,metadata,cancellationToken:CancellationToken.None);}catch(Exception ex){_log.LogWarning(ex,"Audit delivery failed after UserRolesReplaced");}}
  private async Task Audit(string action,string id){try{await _audit.LogAsync(AuditActionEnum.Update,"IdentityRoleManagement",id,action,cancellationToken:CancellationToken.None);}catch(Exception ex){_log.LogWarning(ex,"Audit delivery failed after {Action}",action);}}
 }
