@@ -10,12 +10,12 @@ namespace ahis.template.application.Interfaces.Services
 {
     public interface IApiClientService
     {
-        Task<CreateApiClientResponseVM> CreateClientAsync(CreateApiClientCommand command, string? createdBy, CancellationToken cancellationToken = default);
+        Task<CreateApiClientResponseVM> CreateClientAsync(CreateApiClientCommand command, string createdBy, CancellationToken cancellationToken = default);
 
-        Task<CreateApiClientKeyResponseVM> CreateKeyAsync(Guid apiClientId, CreateApiClientKeyCommand command, string? createdBy, CancellationToken cancellationToken = default);
+        Task<CreateApiClientKeyResponseVM> CreateKeyAsync(Guid apiClientId, CreateApiClientKeyCommand command, string createdBy, CancellationToken cancellationToken = default);
 
-        Task RevokeKeyAsync(Guid apiClientId, Guid keyId, string reason, string? revokedBy, CancellationToken cancellationToken = default);
+        Task RevokeKeyAsync(Guid apiClientId, Guid keyId, string reason, string revokedBy, CancellationToken cancellationToken = default);
 
-        Task DeactivateClientAsync(Guid apiClientId, string reason, string? deactivatedBy, CancellationToken cancellationToken = default);
+        Task DeactivateClientAsync(Guid apiClientId, string reason, string deactivatedBy, CancellationToken cancellationToken = default);
     }
 }

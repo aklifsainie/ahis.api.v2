@@ -72,11 +72,36 @@ namespace ahis.template.api.ApiClientAuthentication
             var principal = new ClaimsPrincipal(identity);
             var ticket = new AuthenticationTicket(principal, ApiKeyAuthenticationDefault.AuthenticationScheme);
 
+            Context.Features.Set(new ApiClientRequestContext(
+                validationResult.ApiClientDatabaseId.Value,
+                validationResult.ApiClientKeyId.Value,
+                validationResult.RateLimitPerMinute));
+
             /*
              * For a low-volume implementation.
              * Consider background updates for high traffic.
              */
-            await _apiKeyValidator.UpdateLastUsedAsync(validationResult.ApiClientKeyId.Value, Context.RequestAborted);
+            try
+            {
+                using var trackingCancellation = CancellationTokenSource.CreateLinkedTokenSource(Context.RequestAborted);
+                trackingCancellation.CancelAfter(TimeSpan.FromSeconds(1));
+                await _apiKeyValidator.UpdateLastUsedAsync(
+                    validationResult.ApiClientKeyId.Value,
+                    validationResult.LastUsedAt,
+                    trackingCancellation.Token);
+            }
+            catch (OperationCanceledException) when (Context.RequestAborted.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("API-key usage tracking timed out for key {ApiClientKeyId}.", validationResult.ApiClientKeyId.Value);
+            }
+            catch (Exception)
+            {
+                _logger.LogWarning("API-key usage tracking failed for key {ApiClientKeyId}.", validationResult.ApiClientKeyId.Value);
+            }
 
             return AuthenticateResult.Success(ticket);
         }

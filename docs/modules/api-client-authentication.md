@@ -11,8 +11,10 @@ The module owns API clients, generated API keys, permission claims, validation, 
 - Validation requires an active, non-revoked, unexpired key and active client, and fails generically.
 - Client deactivation revokes active keys; repeat key revocation is idempotent.
 
-## Risks and boundaries
+## Authorization, auditing, and rate limits
 
-Administration lacks explicit authorization and mutation audit coverage. The direct controller-service path is an established local variation, not the default pattern. `RateLimitPerMinute` is persisted but not consumed by a client-specific limiter. There are no committed module tests.
+API-client administration requires a bearer-authenticated current `Superadmin` and an actor-bound `X-Step-Up-Proof`; API keys cannot administer clients. Mutations write redacted `AuditLog` rows in the same application transaction. The direct controller-service path remains a local variation, not the default pattern.
+
+Country traffic uses the client's persisted `RateLimitPerMinute` as a per-instance, per-client sliding-window quota shared by that client's keys. Invalid stored limits fail key authentication. `LastUsedAt` is best-effort telemetry, updated at most once per minute, and a tracking write failure does not reject a valid key. There are no committed HTTP integration tests.
 
 These are observed implementation facts. See the local `AGENTS.md` and [security guidance](../architecture/authentication-authorization.md).

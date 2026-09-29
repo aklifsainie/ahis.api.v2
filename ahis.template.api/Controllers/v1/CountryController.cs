@@ -13,8 +13,7 @@ namespace ahis.template.api.Controllers.v1
 {
     [Route("api/v1/country")]
     [ApiController]
-    [Authorize(AuthenticationSchemes = "Bearer," + ApiKeyAuthenticationDefault.AuthenticationScheme)]
-    [EnableRateLimiting("ApiPolicy")]
+    [EnableRateLimiting("CountryTrafficPolicy")]
     public class CountryController : BaseApiController
     {
         private readonly IMediator _mediator;
@@ -36,6 +35,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="500">Unexpected internal server error</response>
         /// <returns>This is a return messsage</returns>
         [HttpGet]
+        [Authorize(Policy = "CountryReadPolicy")]
         [ProducesResponseType(typeof(ResponseDto<List<CountryVM>>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -78,6 +78,7 @@ namespace ahis.template.api.Controllers.v1
         /// An unexpected server error occurred.
         /// </response>
         [HttpGet("{id:int}")]
+        [Authorize(Policy = "CountryReadPolicy")]
         [ProducesResponseType(typeof(ResponseDto<CountryVM>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -104,6 +105,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="500">Unexpected internal server error</response>
         /// <returns>This is a return messsage</returns>
         [HttpPost]
+        [Authorize(Policy = "CountryWritePolicy")]
         [ProducesResponseType(typeof(ResponseDto<CountryVM>), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -133,6 +135,7 @@ namespace ahis.template.api.Controllers.v1
         /// <param name="command">The updated country information.</param>
         /// <param name="cancellationToken">Request cancellation token.</param>
         [HttpPut("{id:int}")]
+        [Authorize(Policy = "CountryWritePolicy")]
         [ProducesResponseType(typeof(ResponseDto<CountryVM>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -157,6 +160,7 @@ namespace ahis.template.api.Controllers.v1
         /// <param name="id">The country ID.</param>
         /// <param name="cancellationToken">Request cancellation token.</param>
         [HttpDelete("{id:int}")]
+        [Authorize(Policy = "CountryWritePolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]

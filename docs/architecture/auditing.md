@@ -6,4 +6,4 @@ Choose auditable entities deliberately. Their keys must be available when `Savin
 
 `IAuditLogger` records reads and other events that EF tracking cannot represent. It captures request/actor context and suppresses non-cancellation persistence failures, so explicit auditing is attempted rather than guaranteed. Country GetAll and GetById are current examples.
 
-Audit queries filter by entity, entity ID, user, action, UTC range, and page; page size is clamped to 1–100 and results are newest first. Audit rows intentionally have no Identity foreign key, but audit access presently has no dedicated authorization policy.
+Audit queries filter by entity, entity ID, user, action, UTC range, and page; page size is clamped to 1–100 and results are newest first. Audit rows intentionally have no Identity foreign key. Query access requires bearer `Superadmin`. API-client administration writes redacted mutation audit rows inside its application transaction.

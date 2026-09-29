@@ -13,6 +13,7 @@ using ahis.template.infrastructure;
 using ahis.template.infrastructure.Contexts;
 using ahis.template.infrastructure.SharedKernel;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.UI.Services;
@@ -41,6 +42,7 @@ namespace ahis.template.api
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<UnitOfWork>();
             builder.Services.AddHttpContextAccessor();
+            builder.Services.AddSingleton(TimeProvider.System);
             builder.Services.AddHostedService<IdentitySessionCleanupHostedService>();
 
 
@@ -78,31 +80,40 @@ namespace ahis.template.api
                     "CountryReadPolicy",
                     policy =>
                     {
-                        policy.AddAuthenticationSchemes(
-                            ApiKeyAuthenticationDefault
-                                .AuthenticationScheme);
-
+                        policy.AddAuthenticationSchemes("CountryAuthentication");
                         policy.RequireAuthenticatedUser();
-
-                        policy.RequireClaim(
-                            ApiKeyClaimType.Permission,
-                            "country.read");
+                        policy.RequireAssertion(context =>
+                            context.User.IsInRole(IdentityRoleNames.User) ||
+                            context.User.IsInRole(IdentityRoleNames.Superadmin) ||
+                            (context.User.HasClaim(ApiKeyClaimType.AuthenticationType, "api_key") &&
+                             context.User.HasClaim(ApiKeyClaimType.Permission, "country.read")));
                     });
 
                 options.AddPolicy(
                     "CountryWritePolicy",
                     policy =>
                     {
-                        policy.AddAuthenticationSchemes(
-                            ApiKeyAuthenticationDefault
-                                .AuthenticationScheme);
-
+                        policy.AddAuthenticationSchemes("CountryAuthentication");
                         policy.RequireAuthenticatedUser();
-
-                        policy.RequireClaim(
-                            ApiKeyClaimType.Permission,
-                            "country.write");
+                        policy.RequireAssertion(context =>
+                            context.User.IsInRole(IdentityRoleNames.Superadmin) ||
+                            (context.User.HasClaim(ApiKeyClaimType.AuthenticationType, "api_key") &&
+                             context.User.HasClaim(ApiKeyClaimType.Permission, "country.write")));
                     });
+
+                options.AddPolicy("ApiClientAdminPolicy", policy =>
+                {
+                    policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireRole(IdentityRoleNames.Superadmin);
+                });
+
+                options.AddPolicy("AuditReadPolicy", policy =>
+                {
+                    policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireRole(IdentityRoleNames.Superadmin);
+                });
 
                 options.AddPolicy(
                     "IdentityAdminSecurityReadPolicy",
@@ -175,6 +186,21 @@ namespace ahis.template.api
             }
 
             app.UseHttpsRedirection();
+
+            app.Use(async (context, next) =>
+            {
+                if (context.Request.Path.StartsWithSegments("/api/apiclient") ||
+                    context.Request.Path.StartsWithSegments("/api/auditlog"))
+                {
+                    context.Response.OnStarting(() =>
+                    {
+                        context.Response.Headers.CacheControl = "no-store";
+                        return Task.CompletedTask;
+                    });
+                }
+
+                await next();
+            });
 
             // IMPORTANT: apply CORS before authorization and endpoint mapping
             app.UseCors("DefaultCorsPolicy");
@@ -324,14 +350,34 @@ namespace ahis.template.api
                             AutoReplenishment = true
                         }));
 
-                // Normal API endpoint
-                options.AddSlidingWindowLimiter("ApiPolicy", limiter =>
+                options.AddPolicy("CountryTrafficPolicy", context =>
                 {
-                    limiter.PermitLimit = 10; // 100 requests
-                    limiter.Window = TimeSpan.FromMinutes(1);
-                    limiter.SegmentsPerWindow = 4; // Sliding window segments
-                    limiter.QueueLimit = 2; // small queue for extra requests
-                    limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+                    var client = context.Features.Get<ApiClientRequestContext>();
+                    if (client is not null)
+                    {
+                        return RateLimitPartition.GetSlidingWindowLimiter(
+                            $"api-client:{client.ClientDatabaseId}:{client.RateLimitPerMinute}",
+                            _ => new SlidingWindowRateLimiterOptions
+                            {
+                                PermitLimit = client.RateLimitPerMinute,
+                                Window = TimeSpan.FromMinutes(1),
+                                SegmentsPerWindow = 4,
+                                QueueLimit = 0,
+                                AutoReplenishment = true
+                            });
+                    }
+
+                    var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+                    return RateLimitPartition.GetSlidingWindowLimiter(
+                        $"human-country:{userId}",
+                        _ => new SlidingWindowRateLimiterOptions
+                        {
+                            PermitLimit = 10,
+                            Window = TimeSpan.FromMinutes(1),
+                            SegmentsPerWindow = 4,
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        });
                 });
 
                 options.OnRejected = async (context, token) =>
@@ -394,6 +440,15 @@ namespace ahis.template.api
                             context.Fail("Invalid bearer token");
                     }
                 };
+            })
+            .AddPolicyScheme("CountryAuthentication", "Country bearer or API key", options =>
+            {
+                options.ForwardDefaultSelector = context =>
+                    context.Request.Headers.ContainsKey("Authorization")
+                        ? JwtBearerDefaults.AuthenticationScheme
+                        : context.Request.Headers.ContainsKey(ApiKeyAuthenticationDefault.HeaderName)
+                            ? ApiKeyAuthenticationDefault.AuthenticationScheme
+                            : JwtBearerDefaults.AuthenticationScheme;
             })
             .AddScheme<ApiKeyAuthenticationOption, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationDefault.AuthenticationScheme, _ => { })
             .AddIdentityCookies();

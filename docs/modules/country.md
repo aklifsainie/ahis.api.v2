@@ -10,8 +10,10 @@ Country owns active reference-data CRUD for names and ISO-style codes. It uses `
 - Add/update normalize text and alpha codes, validate formats, pre-check uniqueness, and persist updates. Delete sets `IsDelete=true` and `IsActive=false`.
 - EF defines unique indexes for full name and all codes; the alpha-3 FluentValidation rule conflicts with stricter annotations/handler checks.
 
-## Risks and test boundary
+## Authorization, risks, and test boundary
 
-The indexes are unfiltered, so soft-deleted values remain reserved while handler pre-checks exclude deleted rows; conflicts can emerge at save time. Country policies are configured but unused. A logical delete produces an automatic audit update, and explicit read auditing is best-effort. Existing tests cover handler behavior only and simulate repository filtering.
+Country reads allow bearer `User` or `Superadmin`, or an API key with `country.read`. Country writes allow bearer `Superadmin`, or an API key with `country.write`. If both credentials are supplied, bearer takes precedence and an invalid bearer never falls back to an API key. Country traffic is rate limited per authenticated human user or API client.
+
+The indexes are unfiltered, so soft-deleted values remain reserved while handler pre-checks exclude deleted rows; conflicts can emerge at save time. A logical delete produces an automatic audit update, and explicit read auditing is best-effort. Existing tests cover handler behavior only and simulate repository filtering.
 
 These are observed facts rather than owner-confirmed rules. See the local `AGENTS.md`, [persistence](../architecture/persistence.md), and [auditing](../architecture/auditing.md).

@@ -12,8 +12,8 @@ namespace ahis.template.api.Controllers
 {
     [Route("api/auditlog")]
     [ApiController]
-    [Authorize(AuthenticationSchemes = "Bearer," + ApiKeyAuthenticationDefault.AuthenticationScheme)]
-    [EnableRateLimiting("ApiPolicy")]
+    [Authorize(Policy = "AuditReadPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
     public class AuditLogController : BaseApiController
     {
         private readonly IMediator _mediator;

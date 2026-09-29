@@ -20,6 +20,8 @@ namespace ahis.template.domain.Models.ViewModels.ApiKeyAuthenticationVM
 
         public int RateLimitPerMinute { get; init; }
 
+        public DateTime? LastUsedAt { get; init; }
+
         public IReadOnlyCollection<string> Permissions { get; init; }
             = Array.Empty<string>();
 
@@ -31,7 +33,8 @@ namespace ahis.template.domain.Models.ViewModels.ApiKeyAuthenticationVM
             string clientId,
             string clientName,
             int rateLimitPerMinute,
-            IReadOnlyCollection<string> permissions)
+            IReadOnlyCollection<string> permissions,
+            DateTime? lastUsedAt)
         {
             return new ApiKeyValidationResult
             {
@@ -41,7 +44,8 @@ namespace ahis.template.domain.Models.ViewModels.ApiKeyAuthenticationVM
                 ClientId = clientId,
                 ClientName = clientName,
                 RateLimitPerMinute = rateLimitPerMinute,
-                Permissions = permissions
+                Permissions = permissions,
+                LastUsedAt = lastUsedAt
             };
         }
 

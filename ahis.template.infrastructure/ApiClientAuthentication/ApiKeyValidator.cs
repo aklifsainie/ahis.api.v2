@@ -15,11 +15,13 @@ namespace ahis.template.infrastructure.ApiClientAuthentication
     {
         private readonly ApplicationDbContext _dbContext;
         private readonly ILogger<ApiKeyValidator> _logger;
+        private readonly TimeProvider _timeProvider;
 
-        public ApiKeyValidator(ApplicationDbContext dbContext, ILogger<ApiKeyValidator> logger)
+        public ApiKeyValidator(ApplicationDbContext dbContext, ILogger<ApiKeyValidator> logger, TimeProvider timeProvider)
         {
             _dbContext = dbContext;
             _logger = logger;
+            _timeProvider = timeProvider;
         }
 
         public async Task<ApiKeyValidationResult> ValidateAsync(string rawApiKey, CancellationToken cancellationToken = default)
@@ -44,7 +46,7 @@ namespace ahis.template.infrastructure.ApiClientAuthentication
                 return ApiKeyValidationResult.Failure("api_key_revoked");
             }
 
-            if (apiClientKey.ExpiresAt.HasValue && apiClientKey.ExpiresAt.Value <= DateTime.UtcNow)
+            if (apiClientKey.ExpiresAt.HasValue && apiClientKey.ExpiresAt.Value <= _timeProvider.GetUtcNow().UtcDateTime)
             {
                 _logger.LogWarning("Expired API key {KeyPrefix} was used.", apiClientKey.KeyPrefix);
                 return ApiKeyValidationResult.Failure("api_key_expired");
@@ -56,17 +58,30 @@ namespace ahis.template.infrastructure.ApiClientAuthentication
                 return ApiKeyValidationResult.Failure("api_client_inactive");
             }
 
+            if (apiClientKey.ApiClient.RateLimitPerMinute is < 1 or > 10000)
+            {
+                _logger.LogError("API client {ClientId} has an invalid configured rate limit.", apiClientKey.ApiClient.Id);
+                return ApiKeyValidationResult.Failure("api_client_invalid_configuration");
+            }
+
             var permissions = apiClientKey.ApiClient.Permissions.Select(x => x.PermissionCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            return ApiKeyValidationResult.Success(apiClientKey.ApiClient.Id, apiClientKey.Id, apiClientKey.ApiClient.ClientId, apiClientKey.ApiClient.ClientName, apiClientKey.ApiClient.RateLimitPerMinute, permissions);
+            return ApiKeyValidationResult.Success(apiClientKey.ApiClient.Id, apiClientKey.Id, apiClientKey.ApiClient.ClientId, apiClientKey.ApiClient.ClientName, apiClientKey.ApiClient.RateLimitPerMinute, permissions, apiClientKey.LastUsedAt);
         }
 
-        public async Task UpdateLastUsedAsync(Guid apiClientKeyId, CancellationToken cancellationToken = default)
+        public async Task UpdateLastUsedAsync(Guid apiClientKeyId, DateTime? observedLastUsedAt, CancellationToken cancellationToken = default)
         {
             /*
              * This performs an UPDATE without loading the entity.
              * Available in EF Core 7 and later.
              */
-            await _dbContext.ApiClientKey.Where(x => x.Id == apiClientKeyId).ExecuteUpdateAsync(setters => setters.SetProperty(x => x.LastUsedAt, DateTime.UtcNow), cancellationToken);
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            if (observedLastUsedAt.HasValue && observedLastUsedAt.Value > now.AddMinutes(-1))
+                return;
+
+            await _dbContext.ApiClientKey
+                .Where(x => x.Id == apiClientKeyId &&
+                    (!x.LastUsedAt.HasValue || x.LastUsedAt <= now.AddMinutes(-1)))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.LastUsedAt, now), cancellationToken);
         }
     }
 }

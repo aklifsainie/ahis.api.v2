@@ -1,6 +1,7 @@
 ﻿using ahis.template.application.Features.ApiKeyAuthenticationFeatures.Commands;
 using ahis.template.application.Interfaces.Services;
 using ahis.template.domain.Models.ViewModels.ApiKeyAuthenticationVM;
+using ahis.template.identity.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -11,14 +12,17 @@ namespace ahis.template.api.Controllers.v1
 {
     [Route("api/apiclient")]
     [ApiController]
-    [EnableRateLimiting("ApiPolicy")]
+    [Authorize(Policy = "ApiClientAdminPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
     public class ApiClientController : ControllerBase
     {
         private readonly IApiClientService _apiClientService;
+        private readonly IIdentityApiClientAdministrationService _administration;
 
-        public ApiClientController(IApiClientService apiClientService)
+        public ApiClientController(IApiClientService apiClientService, IIdentityApiClientAdministrationService administration)
         {
             _apiClientService = apiClientService;
+            _administration = administration;
         }
 
         /// <summary>
@@ -27,13 +31,16 @@ namespace ahis.template.api.Controllers.v1
         /// </summary>
         [HttpPost]
         [ProducesResponseType(typeof(CreateApiClientResponseVM), StatusCodes.Status201Created)]
-        public async Task<IActionResult> CreateClient([FromBody] CreateApiClientCommand command, CancellationToken cancellationToken)
+        public async Task<IActionResult> CreateClient([FromBody] CreateApiClientCommand command, [FromHeader(Name = "X-Step-Up-Proof")] string? proof, CancellationToken cancellationToken)
         {
             var createdBy = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var authorization = await AuthorizeAsync(createdBy, proof, cancellationToken);
+            if (authorization is not null) return authorization;
+            var actorUserId = createdBy!;
 
             try
             {
-                var response = await _apiClientService.CreateClientAsync(command, createdBy, cancellationToken);
+                var response = await _apiClientService.CreateClientAsync(command, actorUserId, cancellationToken);
 
                 return CreatedAtAction(nameof(CreateClient), new { id = response.Id }, response);
             }
@@ -52,13 +59,16 @@ namespace ahis.template.api.Controllers.v1
         /// </summary>
         [HttpPost("{apiClientId:guid}/keys")]
         [ProducesResponseType(typeof(CreateApiClientKeyResponseVM), StatusCodes.Status201Created)]
-        public async Task<IActionResult> CreateKey(Guid apiClientId, [FromBody] CreateApiClientKeyCommand command, CancellationToken cancellationToken)
+        public async Task<IActionResult> CreateKey(Guid apiClientId, [FromBody] CreateApiClientKeyCommand command, [FromHeader(Name = "X-Step-Up-Proof")] string? proof, CancellationToken cancellationToken)
         {
             var createdBy = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var authorization = await AuthorizeAsync(createdBy, proof, cancellationToken);
+            if (authorization is not null) return authorization;
+            var actorUserId = createdBy!;
 
             try
             {
-                var response = await _apiClientService.CreateKeyAsync(apiClientId, command, createdBy, cancellationToken);
+                var response = await _apiClientService.CreateKeyAsync(apiClientId, command, actorUserId, cancellationToken);
 
                 return StatusCode(StatusCodes.Status201Created, response);
             }
@@ -80,13 +90,16 @@ namespace ahis.template.api.Controllers.v1
         }
 
         [HttpPost("{apiClientId:guid}/keys/{keyId:guid}/revoke")]
-        public async Task<IActionResult> RevokeKey(Guid apiClientId, Guid keyId, [FromBody] RevokeApiClientKeyRequest request, CancellationToken cancellationToken)
+        public async Task<IActionResult> RevokeKey(Guid apiClientId, Guid keyId, [FromBody] RevokeApiClientKeyRequest request, [FromHeader(Name = "X-Step-Up-Proof")] string? proof, CancellationToken cancellationToken)
         {
             var revokedBy = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var authorization = await AuthorizeAsync(revokedBy, proof, cancellationToken);
+            if (authorization is not null) return authorization;
+            var actorUserId = revokedBy!;
 
             try
             {
-                await _apiClientService.RevokeKeyAsync(apiClientId, keyId, request.Reason, revokedBy, cancellationToken);
+                await _apiClientService.RevokeKeyAsync(apiClientId, keyId, request.Reason, actorUserId, cancellationToken);
 
                 return NoContent();
             }
@@ -97,13 +110,16 @@ namespace ahis.template.api.Controllers.v1
         }
 
         [HttpPost("{apiClientId:guid}/deactivate")]
-        public async Task<IActionResult> DeactivateClient(Guid apiClientId, [FromBody] DeactivateApiClientRequest request, CancellationToken cancellationToken)
+        public async Task<IActionResult> DeactivateClient(Guid apiClientId, [FromBody] DeactivateApiClientRequest request, [FromHeader(Name = "X-Step-Up-Proof")] string? proof, CancellationToken cancellationToken)
         {
             var deactivatedBy = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var authorization = await AuthorizeAsync(deactivatedBy, proof, cancellationToken);
+            if (authorization is not null) return authorization;
+            var actorUserId = deactivatedBy!;
 
             try
             {
-                await _apiClientService.DeactivateClientAsync(apiClientId, request.Reason, deactivatedBy, cancellationToken);
+                await _apiClientService.DeactivateClientAsync(apiClientId, request.Reason, actorUserId, cancellationToken);
 
                 return NoContent();
             }
@@ -111,6 +127,19 @@ namespace ahis.template.api.Controllers.v1
             {
                 return NotFound(new { message = ex.Message });
             }
+        }
+
+        private async Task<IActionResult?> AuthorizeAsync(string? actorUserId, string? proof, CancellationToken cancellationToken)
+        {
+            if (Request.Headers["X-Step-Up-Proof"].Count > 1)
+                return BadRequest(new ProblemDetails { Title = "Invalid step-up proof.", Status = StatusCodes.Status400BadRequest });
+
+            var result = await _administration.ValidateAsync(actorUserId ?? string.Empty, proof, cancellationToken);
+            if (result.IsSuccess) return null;
+
+            return result.Errors.Any(error => error.Metadata.ContainsKey("Forbidden"))
+                ? Forbid()
+                : BadRequest(new ProblemDetails { Title = "Unable to authorize API-client administration.", Status = StatusCodes.Status400BadRequest });
         }
     }
 
