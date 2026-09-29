@@ -4,6 +4,7 @@ using ahis.template.application.Interfaces.Commons;
 using ahis.template.application.Interfaces.Services;
 using ahis.template.identity.Interfaces;
 using ahis.template.identity.Models.DTOs;
+using ahis.template.domain.Security;
 using FluentAssertions;
 using FluentResults;
 using Microsoft.Extensions.Logging;
@@ -13,6 +14,33 @@ namespace ahis.template.test.TestFeatures.IdentityFeature;
 
 public sealed class IdentityRoleManagementHandlerTest
 {
+    [Fact]
+    public async Task ReturnsTheCompleteOrderedHumanPermissionCatalogWithFrontendMetadata()
+    {
+        var handler = CreateHandler(Mock.Of<IIdentityRoleManagementService>(), Mock.Of<IAuditLogger>());
+
+        var result = await handler.Handle(new GetHumanPermissionCatalogQuery(), CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Permissions.Select(permission => permission.Code)
+            .Should().Equal(HumanPermissionCatalog.CountryRead, HumanPermissionCatalog.CountryWrite);
+        result.Value.Permissions.Should().BeEquivalentTo(
+        [
+            new ahis.template.domain.Models.ViewModels.IdentityRoleVM.AdminPermissionVM(
+                HumanPermissionCatalog.CountryRead,
+                "View countries",
+                "View active country reference data.",
+                "Country"),
+            new ahis.template.domain.Models.ViewModels.IdentityRoleVM.AdminPermissionVM(
+                HumanPermissionCatalog.CountryWrite,
+                "Manage countries",
+                "Create, update, and delete country reference data.",
+                "Country")
+        ], options => options.WithStrictOrdering());
+        result.Value.Permissions.Select(permission => permission.Code)
+            .Should().BeEquivalentTo(HumanPermissionCatalog.All);
+    }
+
     [Fact]
     public async Task AuditsSortedChangedRoleIdsAfterSuccessfulReplacement()
     {

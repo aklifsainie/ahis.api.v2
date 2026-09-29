@@ -14,6 +14,8 @@ The initial human-user RBAC catalog contains protected `Superadmin` and `User` r
 
 API-client administration requires bearer `Superadmin` authorization and a current actor-bound step-up proof. Audit queries require bearer `Superadmin`. Country reads allow bearer `User`/`Superadmin`, bearer `human_permission=country.read`, or API-client `api_permission=country.read`; writes allow bearer `Superadmin`, bearer `human_permission=country.write`, or API-client `api_permission=country.write`. Country selects bearer whenever an Authorization header is supplied and never falls back to a key after bearer validation fails. API-client limits are enforced per client and per application instance.
 
+`GET /api/admin/identity/permissions` exposes the server-owned, assignable human-role permission catalog to bearer-authenticated Superadmins. Its no-store response supplies stable code, English label, description, and category metadata for administrative frontend role editors; it is not authorization evidence. The server continues to validate submitted role permissions against `HumanPermissionCatalog`. API-client `api_permission` values remain a separate model and are not returned by this endpoint.
+
 Documentation and logs may name configuration keys but must never include secret values.
 
 ## Planned security work
