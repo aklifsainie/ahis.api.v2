@@ -234,7 +234,7 @@ Administrative responses must never contain password hashes, authenticator secre
 
 ## P2 — User role management
 
-ASP.NET Core Identity role storage and JWT role claims already exist, but no confirmed endpoints or Identity service contract manage roles or user-role assignments. The README also identifies role and permission management as a future improvement.
+ASP.NET Core Identity role storage and JWT role claims are managed through the approved v1 role-catalog and direct user-role endpoints. Human-user permissions and arbitrary role-claim editing remain deferred.
 
 Role management should remain in the Identity boundary and use `RoleManager<IdentityRole>` and `UserManager<ApplicationUser>`. It must not reuse API-client permissions, which belong to the separate API-client authentication module and use a different principal and claim type.
 
@@ -244,53 +244,51 @@ Role management should remain in the Identity boundary and use `RoleManager<Iden
 - [x] Decide whether roles alone are sufficient or whether human-user permissions will be represented by Identity role claims: v1 uses roles only; human-user permissions remain deferred.
 - [x] Define dedicated policies for reading roles, managing roles, and assigning roles: `IdentityRoleReadPolicy`, `IdentityRoleManagementPolicy`, and `IdentityRoleAssignmentPolicy` require bearer-authenticated `Superadmin`.
 - [x] Define a secure first-administrator bootstrap process that is unavailable after bootstrap: an existing active, confirmed, unrestricted user is selected by deployment configuration and guarded by `IdentityRoleBootstrapState`.
-- [ ] Prevent deletion or unsafe renaming of protected system roles: protected names are established; enforcement belongs to the role-management endpoint blueprint.
-- [ ] Prevent removal or deactivation of the last effective administrator.
-- [ ] Define whether administrators may change their own roles; default recommendation is to prohibit self-escalation and last-administrator self-demotion.
-- [ ] Define how a role or role-claim change invalidates access tokens for every affected user.
+- [x] Prevent deletion or unsafe renaming of protected system roles.
+- [x] Prevent removal of the last effective administrator during direct role replacement; SQL Server concurrency verification remains pending.
+- [x] Prohibit administrators from changing their own direct role set.
+- [x] Invalidate affected users' token/session state after direct membership changes and assigned-role renames.
 - [x] Consolidate the Identity role store: the configured role type maps to `IdentityRole`, with user-role and role-claim relationships referencing it. The user reports applying `ConsolidateIdentityRoleStore` on 2026-09-29; other environments require their own inventory.
 
-The P0 token/security-version mechanism exists, but role and role-claim mutation workflows still need to invoke it for every affected user because current JWTs contain a snapshot of roles at issuance.
+The P0 token/security-version mechanism is invoked for affected users because current JWTs contain a snapshot of roles at issuance. Role claims are not exposed for mutation in v1.
 
-Implementation evidence (2026-09-29): [`IdentityRoleBootstrapService`](../../ahis.template.identity/Services/IdentityRoleBootstrapService.cs) seeds the protected `Superadmin` and `User` roles and performs one-time first-administrator promotion from `Identity:Bootstrap:SuperadminEmail`. [`IdentityRoleBootstrapState`](../../ahis.template.identity/Models/Entities/IdentityRoleBootstrapState.cs) records the durable singleton completion marker; [`AddIdentityRoleBootstrapState`](../../ahis.template.identity/Migrations/20260929034815_AddIdentityRoleBootstrapState.cs) was generated and source-reviewed, and the user reports applying it manually. `Program.cs` registers the three dedicated bearer Superadmin policies. Role catalog and assignment endpoints, last-administrator enforcement, self-change rules, and role-change token invalidation remain pending blueprint 2.
+Implementation evidence (2026-09-29): [`IdentityRoleBootstrapService`](../../ahis.template.identity/Services/IdentityRoleBootstrapService.cs) seeds the protected `Superadmin` and `User` roles and performs one-time first-administrator promotion from `Identity:Bootstrap:SuperadminEmail`. [`IdentityRoleManagementService`](../../ahis.template.identity/Services/IdentityRoleManagementService.cs) owns `RoleManager`, `UserManager`, transactions, proof checks, direct assignment changes, and token-state invalidation. [`AdminIdentityRolesController`](../../ahis.template.api/Controllers/v1/AdminIdentityRolesController.cs) and [`AdminIdentityController`](../../ahis.template.api/Controllers/v1/AdminIdentityController.cs) expose the routes. The relational concurrency and endpoint authorization test coverage described in the approved blueprint remains pending.
 
 ### Role catalog endpoints
 
-- [ ] `GET /api/admin/identity/roles`
-  - [ ] Require the role-read policy.
-  - [ ] Support bounded pagination and optional normalized-name filtering.
-  - [ ] Return role ID, name, protected status, and assignment count; do not expose internal concurrency values unless they are deliberately used as an ETag.
-- [ ] `GET /api/admin/identity/roles/{roleId}`
-  - [ ] Return role details and approved claims/permissions.
-  - [ ] Return a consistent not-found response without exposing unrelated user data.
-- [ ] `POST /api/admin/identity/roles`
-  - [ ] Require the role-management policy and recent step-up authentication.
-  - [ ] Normalize names through `RoleManager`; reject blank, duplicate, reserved, or invalid names.
-  - [ ] Audit actor, created role, timestamp, and request correlation without sensitive values.
-- [ ] `PUT /api/admin/identity/roles/{roleId}`
-  - [ ] Require the role-management policy and recent step-up authentication.
-  - [ ] Use optimistic concurrency for updates.
-  - [ ] Protect system-role names and define the effect of renaming a role referenced by policies or configuration.
-- [ ] `DELETE /api/admin/identity/roles/{roleId}`
-  - [ ] Require the role-management policy and recent step-up authentication.
-  - [ ] Reject protected roles and roles with assignments unless an explicit reassignment workflow is approved.
-  - [ ] Make the expected behavior for repeated deletion explicit.
+- [x] `GET /api/admin/identity/roles`
+  - [x] Require the role-read policy.
+  - [x] Support bounded pagination and optional normalized-name filtering.
+  - [x] Return role ID, name, protected status, and assignment count without concurrency values.
+- [x] `GET /api/admin/identity/roles/{roleId}`
+  - [x] Return role details with an empty v1 permissions collection and opaque ETag.
+  - [x] Return a consistent not-found response without unrelated user data.
+- [x] `POST /api/admin/identity/roles`
+  - [x] Require the role-management policy and recent step-up authentication.
+  - [x] Normalize names through `RoleManager`; reject blank, duplicate, reserved, or invalid names.
+  - [x] Attempt a redacted post-commit audit without proof or credential material.
+- [x] `PUT /api/admin/identity/roles/{roleId}`
+  - [x] Require the role-management policy, recent step-up authentication, and `If-Match`.
+  - [x] Use opaque ETag optimistic concurrency.
+  - [x] Protect system-role names and invalidate assigned users after a custom-role rename.
+- [x] `DELETE /api/admin/identity/roles/{roleId}`
+  - [x] Require the role-management policy and recent step-up authentication.
+  - [x] Reject protected roles and assigned roles; repeated deletion is `404`.
 
 ### User-role assignment endpoints
 
-- [ ] `GET /api/admin/identity/users/{userId}/roles`
-  - [ ] Require the role-read policy.
-  - [ ] Return direct Identity role assignments only, unless inherited access is introduced later.
-- [ ] `PUT /api/admin/identity/users/{userId}/roles`
-  - [ ] Require the role-assignment policy and recent step-up authentication.
-  - [ ] Treat the submitted role IDs as an atomic desired set to avoid partial assignment.
-  - [ ] Validate all roles before making changes.
-  - [ ] Prevent self-escalation, unsafe self-demotion, and removal of the last administrator.
-  - [ ] Update the user's token/security version and revoke refresh sessions according to the approved policy.
-  - [ ] Audit added and removed roles with actor and target IDs.
-- [ ] `GET /api/admin/identity/roles/{roleId}/users`
-  - [ ] Require the role-read policy.
-  - [ ] Return a bounded, paginated projection rather than full Identity user records.
+- [x] `GET /api/admin/identity/users/{userId}/roles`
+  - [x] Require the role-read policy.
+  - [x] Return direct Identity role assignments only.
+- [x] `PUT /api/admin/identity/users/{userId}/roles`
+  - [x] Require the role-assignment policy and recent step-up authentication.
+  - [x] Treat submitted role IDs as an atomic desired set and validate all IDs before writes.
+  - [x] Prevent direct self-role changes and removal of the last effective administrator.
+  - [x] Update the target security version and revoke refresh sessions after a changed set.
+  - [ ] Expand the redacted audit metadata to include added and removed role IDs; the current post-commit audit records a fixed action and target ID only.
+- [x] `GET /api/admin/identity/roles/{roleId}/users`
+  - [x] Require the role-read policy.
+  - [x] Return a bounded, paginated projection rather than full Identity user records.
 
 An atomic `PUT` is recommended for assignment because it gives the server one validated target state. Separate `POST .../roles/{roleId}` and `DELETE .../roles/{roleId}` operations may be used instead if the product requires granular changes, but the API should not expose both styles without a clear consistency rule.
 
