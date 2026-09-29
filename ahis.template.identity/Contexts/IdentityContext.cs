@@ -21,15 +21,15 @@ namespace ahis.template.identity.Contexts
         {
             base.OnModelCreating(builder);
 
-            // Rename default AspNet* tables to remove AspNet prefix
+            // Map the configured role type, not its generic base type.
             builder.Entity<ApplicationUser>(b =>
             {
                 b.ToTable("IdentityUsers");
             });
 
-            builder.Entity<IdentityRole<string>>(b =>
+            builder.Entity<IdentityRole>(b =>
             {
-                b.ToTable("IdentityRoles");
+                b.ToTable("IdentityRole");
             });
 
             builder.Entity<IdentityUserRole<string>>(b =>
