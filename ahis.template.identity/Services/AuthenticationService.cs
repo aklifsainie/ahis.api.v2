@@ -1,5 +1,6 @@
 ﻿using ahis.template.domain.Enums;
 using ahis.template.domain.Models.ViewModels.AuthenticationVM;
+using ahis.template.domain.Security;
 using ahis.template.identity.Contexts;
 using ahis.template.identity.Interfaces;
 using ahis.template.identity.Models;
@@ -878,7 +879,7 @@ namespace ahis.template.identity.Services
 
             // Add custom user claims,if any
             var userClaims = await _userManager.GetClaimsAsync(user);
-            claims.AddRange(userClaims);
+            claims.AddRange(userClaims.Where(claim => claim.Type != HumanPermissionCatalog.ClaimType));
 
             // ADD ROLES
             var roles = await _userManager.GetRolesAsync(user);
@@ -886,6 +887,20 @@ namespace ahis.template.identity.Services
             {
                 claims.Add(new Claim(ClaimTypes.Role, role));
             }
+
+            var humanPermissionCodes = HumanPermissionCatalog.All.ToArray();
+            var permissions = await (from userRole in _context.UserRoles.AsNoTracking()
+                                     join roleClaim in _context.RoleClaims.AsNoTracking() on userRole.RoleId equals roleClaim.RoleId
+                                     where userRole.UserId == user.Id &&
+                                           roleClaim.ClaimType == HumanPermissionCatalog.ClaimType &&
+                                           roleClaim.ClaimValue != null &&
+                                           humanPermissionCodes.Contains(roleClaim.ClaimValue)
+                                     select roleClaim.ClaimValue!)
+                .Distinct()
+                .OrderBy(permission => permission)
+                .ToListAsync();
+            foreach (var permission in permissions)
+                claims.Add(new Claim(HumanPermissionCatalog.ClaimType, permission));
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:SigningKey"] ?? throw new InvalidOperationException("Jwt:SigningKey not configured")));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

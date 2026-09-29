@@ -12,7 +12,7 @@ Country owns active reference-data CRUD for names and ISO-style codes. It uses `
 
 ## Authorization, risks, and test boundary
 
-Country reads allow bearer `User` or `Superadmin`, or an API key with `country.read`. Country writes allow bearer `Superadmin`, or an API key with `country.write`. If both credentials are supplied, bearer takes precedence and an invalid bearer never falls back to an API key. Country traffic is rate limited per authenticated human user or API client.
+Country reads allow bearer `User` or `Superadmin`, a bearer `human_permission` claim with `country.read`, or an API key with `api_permission=country.read`. Country writes allow bearer `Superadmin`, a bearer `human_permission` claim with `country.write`, or an API key with `api_permission=country.write`. If both credentials are supplied, bearer takes precedence and an invalid bearer never falls back to an API key. Country traffic is rate limited per authenticated human user or API client.
 
 The indexes are unfiltered, so soft-deleted values remain reserved while handler pre-checks exclude deleted rows; conflicts can emerge at save time. A logical delete produces an automatic audit update, and explicit read auditing is best-effort. Existing tests cover handler behavior only and simulate repository filtering.
 

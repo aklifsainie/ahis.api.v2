@@ -3,6 +3,7 @@ using ahis.template.api.Filters;
 using ahis.template.api.Services;
 using ahis.template.application.Interfaces.Services;
 using ahis.template.application.Services;
+using ahis.template.domain.Security;
 using ahis.template.identity;
 using ahis.template.identity.Contexts;
 using ahis.template.identity.Services;
@@ -85,6 +86,7 @@ namespace ahis.template.api
                         policy.RequireAssertion(context =>
                             context.User.IsInRole(IdentityRoleNames.User) ||
                             context.User.IsInRole(IdentityRoleNames.Superadmin) ||
+                            context.User.HasClaim(HumanPermissionCatalog.ClaimType, HumanPermissionCatalog.CountryRead) ||
                             (context.User.HasClaim(ApiKeyClaimType.AuthenticationType, "api_key") &&
                              context.User.HasClaim(ApiKeyClaimType.Permission, "country.read")));
                     });
@@ -97,6 +99,7 @@ namespace ahis.template.api
                         policy.RequireAuthenticatedUser();
                         policy.RequireAssertion(context =>
                             context.User.IsInRole(IdentityRoleNames.Superadmin) ||
+                            context.User.HasClaim(HumanPermissionCatalog.ClaimType, HumanPermissionCatalog.CountryWrite) ||
                             (context.User.HasClaim(ApiKeyClaimType.AuthenticationType, "api_key") &&
                              context.User.HasClaim(ApiKeyClaimType.Permission, "country.write")));
                     });

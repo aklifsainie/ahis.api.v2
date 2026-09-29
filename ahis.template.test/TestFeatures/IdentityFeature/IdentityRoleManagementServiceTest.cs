@@ -3,6 +3,7 @@ using ahis.template.identity.Interfaces;
 using ahis.template.identity.Models.Entities;
 using ahis.template.identity.Security;
 using ahis.template.identity.Services;
+using ahis.template.domain.Security;
 using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -81,6 +82,61 @@ public sealed class IdentityRoleManagementServiceTest
         result.Errors.Single().Metadata.Should().ContainKey("Validation");
     }
 
+    [Fact]
+    public async Task ReplacesCustomRolePermissionsAndInvalidatesEveryAssignedUser()
+    {
+        await using var fixture = await RoleManagementFixture.CreateAsync();
+        var role = await fixture.AddRoleAsync("CountryReader");
+        var first = await fixture.AddUserAsync("first");
+        var second = await fixture.AddUserAsync("second");
+        await fixture.Users.AddToRoleAsync(first, role.Name!);
+        await fixture.Users.AddToRoleAsync(second, role.Name!);
+        fixture.Tokens.Setup(x => x.InvalidateAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>())).ReturnsAsync(IdentityResult.Success);
+        var etag = (await fixture.Service.GetRoleAsync(role.Id, CancellationToken.None)).Value.ETag;
+
+        var result = await fixture.Service.ReplaceRolePermissionsAsync("actor", "proof", role.Id, etag, [HumanPermissionCatalog.CountryRead], CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Changed.Should().BeTrue();
+        result.Value.AddedPermissions.Should().Equal(HumanPermissionCatalog.CountryRead);
+        (await fixture.Service.GetRolePermissionsAsync(role.Id, CancellationToken.None)).Value.Should().Equal(HumanPermissionCatalog.CountryRead);
+        fixture.Tokens.Verify(x => x.InvalidateAsync(first, It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Tokens.Verify(x => x.InvalidateAsync(second, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task NoOpPermissionReplacementDoesNotInvalidateUsers()
+    {
+        await using var fixture = await RoleManagementFixture.CreateAsync();
+        var role = await fixture.AddRoleAsync("CountryReader");
+        await fixture.Roles.AddClaimAsync(role, new System.Security.Claims.Claim(HumanPermissionCatalog.ClaimType, HumanPermissionCatalog.CountryRead));
+        var etag = (await fixture.Service.GetRoleAsync(role.Id, CancellationToken.None)).Value.ETag;
+
+        var result = await fixture.Service.ReplaceRolePermissionsAsync("actor", "proof", role.Id, etag, [HumanPermissionCatalog.CountryRead], CancellationToken.None);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Changed.Should().BeFalse();
+        fixture.Tokens.Verify(x => x.InvalidateAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RejectsProtectedRoleAndUnknownPermission()
+    {
+        await using var fixture = await RoleManagementFixture.CreateAsync();
+        var protectedRole = await fixture.Context.Roles.SingleAsync(role => role.Name == IdentityRoleNames.User);
+        var protectedTag = (await fixture.Service.GetRoleAsync(protectedRole.Id, CancellationToken.None)).Value.ETag;
+        var custom = await fixture.AddRoleAsync("Custom");
+        var customTag = (await fixture.Service.GetRoleAsync(custom.Id, CancellationToken.None)).Value.ETag;
+
+        var protectedResult = await fixture.Service.ReplaceRolePermissionsAsync("actor", "proof", protectedRole.Id, protectedTag, [], CancellationToken.None);
+        var invalidResult = await fixture.Service.ReplaceRolePermissionsAsync("actor", "proof", custom.Id, customTag, ["unknown.permission"], CancellationToken.None);
+
+        protectedResult.IsFailed.Should().BeTrue();
+        protectedResult.Errors.Single().Metadata.Should().ContainKey("Conflict");
+        invalidResult.IsFailed.Should().BeTrue();
+        invalidResult.Errors.Single().Metadata.Should().ContainKey("Validation");
+    }
+
     private sealed class RoleManagementFixture : IAsyncDisposable
     {
         private readonly string _connectionString;
@@ -123,6 +179,7 @@ public sealed class IdentityRoleManagementServiceTest
             var service = new IdentityRoleManagementService(context, roles, users, normalizer, proof.Object, tokens.Object, restrictions.Object);
             var superadmin = new IdentityRole(IdentityRoleNames.Superadmin);
             (await roles.CreateAsync(superadmin)).Succeeded.Should().BeTrue();
+            (await roles.CreateAsync(new IdentityRole(IdentityRoleNames.User))).Succeeded.Should().BeTrue();
             var actor = new ApplicationUser { Id = "actor", UserName = "actor", Email = "actor@example.test", IsActive = true, EmailConfirmed = true };
             (await users.CreateAsync(actor)).Succeeded.Should().BeTrue();
             (await users.AddToRoleAsync(actor, IdentityRoleNames.Superadmin)).Succeeded.Should().BeTrue();

@@ -296,12 +296,12 @@ An atomic `PUT` is recommended for assignment because it gives the server one va
 
 Only add these if the approved authorization model uses permissions in addition to roles:
 
-- [ ] `GET /api/admin/identity/roles/{roleId}/permissions`
-- [ ] `PUT /api/admin/identity/roles/{roleId}/permissions`
-- [ ] Define a canonical, allow-listed permission catalog rather than accepting arbitrary claim types or values.
-- [ ] Emit human-user permissions under a claim type distinct from API-client `api_permission` claims unless a reviewed policy deliberately supports both principal types.
-- [ ] Invalidate authorization state for all assigned users after a permission change.
-- [ ] Add policy-level tests proving that roles and permissions are actually applied to protected actions.
+- [x] `GET /api/admin/identity/roles/{roleId}/permissions`
+- [x] `PUT /api/admin/identity/roles/{roleId}/permissions`
+- [x] Define a canonical, allow-listed permission catalog rather than accepting arbitrary claim types or values: `country.read` and `country.write`.
+- [x] Emit human-user permissions as `human_permission`, distinct from API-client `api_permission` claims.
+- [x] Invalidate authorization state for all assigned users after a permission change.
+- [ ] Add policy-level tests proving that roles and permissions are actually applied to protected actions. The user reports that the 2026-09-30 human-user permission runbook passed; relational role-permission tests pass; automated HTTP policy coverage remains pending.
 
 Do not provide a general-purpose endpoint that lets administrators write arbitrary claims. Claim types and values should be constrained by a server-owned catalog.
 
@@ -356,7 +356,7 @@ Add one row when an item moves beyond backlog status.
 | Administrative Identity controls       | Partially implemented | Approved 2026-09-25 | 2026-09-25 | `GET /api/admin/identity/users/{userId}/security-state` requires `IdentityAdminSecurityReadPolicy` and the `Superadmin` role, returns a redacted security-state projection, and records a target-scoped view audit. `POST /api/admin/identity/users/{userId}/revoke-sessions` requires a dedicated bearer `Superadmin` policy and current actor-bound proof, then atomically invalidates target access and refresh sessions without notification; post-commit target-scoped auditing is best effort. `POST /api/admin/identity/users/{userId}/unlock` requires a dedicated bearer `Superadmin` policy and actor-bound proof, rejects self-unlock and non-current ordinary lockouts, and records the closed restriction plus post-commit notification/audit attempts. Role-store consolidation, protected role seeding, dedicated RBAC policies, one-time administrator bootstrap, role catalog, and direct assignment endpoints are implemented. |
 | Role-store consolidation | Implemented in source; user-reported applied | [2026-09-29 revision](../blueprints/2026-09-29-rbac-role-store-consolidation-revision.md) | 2026-09-29 | `IdentityRole` is the single configured role entity and table; the guarded migration was reported applied to one database, without independent inspection. |
 | RBAC foundation and bootstrap | Implemented in source; user-reported migration applied | [2026-09-29 foundation](../blueprints/2026-09-29-rbac-foundation-bootstrap.md) | 2026-09-29 | Protected `Superadmin` and `User` roles, three dedicated bearer policies, durable one-time bootstrap marker, and existing-user promotion are implemented. The user reports successful database application and bootstrap testing. |
-| User role management | Implemented in source; verification in progress | [2026-09-29 completion](../blueprints/2026-09-29-p2-role-management-completion.md) | 2026-09-29 | Role catalog, detail, create/rename/delete, direct user-role listing/replacement, and role-user listing use the dedicated Identity service. Writes require bearer Superadmin authorization plus actor-bound step-up proof; protected roles and self-membership changes are denied, role changes invalidate affected sessions, and detail reads use opaque ETags. Changed assignments now audit sorted added/removed role IDs only. Disposable LocalDB tests pass for changed and no-op replacement and rollback on token-invalidation failure; HTTP authorization and concurrent-demotion coverage remain pending. |
+| User role management | Implemented in source; manually verified | [2026-09-30 human permissions](../blueprints/2026-09-29-p2-human-user-permissions.md) | 2026-09-30 | Role catalog, direct assignments, and custom-role `country.read`/`country.write` permissions use the dedicated Identity service. Permission writes require bearer Superadmin authorization, actor-bound step-up proof, and role ETag; they invalidate assigned users' access and refresh sessions and audit sorted permission deltas. The user reports successful execution of the human-user permission runbook on 2026-09-30; LocalDB role-permission tests pass. Automated HTTP authorization/policy and concurrent-demotion coverage remain pending. |
 | Passkey/WebAuthn support               | Optional    | —                   | —          | Separate initiative                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## Source observations behind this backlog
