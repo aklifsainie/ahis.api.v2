@@ -6,7 +6,7 @@ This document tracks proposed security work for user identity, authentication, s
 
 This is a backlog, not an approved implementation blueprint. Any item that changes a public API, authorization, security behavior, Identity persistence, schema, dependencies, or production configuration requires an approved change blueprint before implementation.
 
-Last reviewed against source: 2026-09-29. Database application status is based on user reports, not independent inspection.
+Last reviewed against source: 2026-09-30. Database application status is based on user reports, not independent inspection.
 
 ## Ownership boundary
 
@@ -114,7 +114,7 @@ This is a dependency for session revocation, MFA reset, email change, and accoun
   - [x] Revoke the current session.
   - [x] Clear the current refresh cookie on success.
 
-Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) exposes the authenticated, rate-limited endpoint. [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) validates the proof and uses `IIdentityTokenStateService.InvalidateAsync` inside an Identity transaction. [`RevokeAllSessionsCommandHandlerTest`](../../ahis.template.test/TestFeatures/AccountFeature/RevokeAllSessionsCommandHandlerTest.cs) covers current-principal routing and success auditing. The API and Infrastructure EF Core references were aligned to `8.0.22`, matching Identity, after a production `MissingMethodException` from mixed EF Core 8/9 `ExecuteUpdateAsync` signatures. Focused tests (2) and the full suite (16) passed; relational concurrency coverage remains unimplemented.
+Implementation evidence (2026-09-22): [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) exposes the authenticated, rate-limited endpoint. [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) validates the proof and uses `IIdentityTokenStateService.InvalidateAsync` inside an Identity transaction. [`RevokeAllSessionsCommandHandlerTest`](../../ahis.template.test/TestFeatures/AccountFeature/RevokeAllSessionsCommandHandlerTest.cs) covers current-principal routing and success auditing. The API and Infrastructure EF Core references were aligned to `8.0.22`, matching Identity, after a production `MissingMethodException` from mixed EF Core 8/9 `ExecuteUpdateAsync` signatures. At that time, focused tests (2) and the full suite (16) passed. The 2026-09-30 [LocalDB concurrency tests](../../ahis.template.test/TestFeatures/IdentityFeature/IdentityConcurrencyTest.cs) now cover refresh versus revoke-all and revoke-one; other interleavings and deployment engines remain unverified.
 
 ### View active sessions
 
@@ -234,25 +234,25 @@ Administrative responses must never contain password hashes, authenticator secre
 
 ## P2 — User role management
 
-ASP.NET Core Identity role storage and JWT role claims are managed through the approved v1 role-catalog and direct user-role endpoints. Human-user permissions and arbitrary role-claim editing remain deferred.
+ASP.NET Core Identity role storage and JWT role claims are managed through the approved v1 role-catalog and direct user-role endpoints. Allow-listed human-user permissions are implemented through custom-role claims; arbitrary role-claim editing remains deferred.
 
 Role management should remain in the Identity boundary and use `RoleManager<IdentityRole>` and `UserManager<ApplicationUser>`. It must not reuse API-client permissions, which belong to the separate API-client authentication module and use a different principal and claim type.
 
 ### Role authorization model
 
 - [x] Define the initial role catalog and identify protected system roles: `Superadmin` and `User` are seeded and protected.
-- [x] Decide whether roles alone are sufficient or whether human-user permissions will be represented by Identity role claims: v1 uses roles only; human-user permissions remain deferred.
+- [x] Decide whether roles alone are sufficient or whether human-user permissions will be represented by Identity role claims: v1 supports allow-listed human-user permissions on custom roles through Identity role claims. (Confirmed in source 2026-09-30)
 - [x] Define dedicated policies for reading roles, managing roles, and assigning roles: `IdentityRoleReadPolicy`, `IdentityRoleManagementPolicy`, and `IdentityRoleAssignmentPolicy` require bearer-authenticated `Superadmin`.
 - [x] Define a secure first-administrator bootstrap process that is unavailable after bootstrap: an existing active, confirmed, unrestricted user is selected by deployment configuration and guarded by `IdentityRoleBootstrapState`.
 - [x] Prevent deletion or unsafe renaming of protected system roles.
-- [x] Prevent removal of the last effective administrator during direct role replacement; SQL Server concurrency verification remains pending.
+- [x] Prevent removal of the last effective administrator during direct role replacement; synchronized cross-demotion tests passed on SQL Server 2019 LocalDB on 2026-09-30. Other interleavings and deployment engines remain unverified.
 - [x] Prohibit administrators from changing their own direct role set.
 - [x] Invalidate affected users' token/session state after direct membership changes and assigned-role renames.
 - [x] Consolidate the Identity role store: the configured role type maps to `IdentityRole`, with user-role and role-claim relationships referencing it. The user reports applying `ConsolidateIdentityRoleStore` on 2026-09-29; other environments require their own inventory.
 
-The P0 token/security-version mechanism is invoked for affected users because current JWTs contain a snapshot of roles at issuance. Role claims are not exposed for mutation in v1.
+The P0 token/security-version mechanism is invoked for affected users because current JWTs contain a snapshot of roles and human-user permissions at issuance. Only allow-listed `human_permission` role claims are exposed for mutation.
 
-Implementation evidence (2026-09-29): [`IdentityRoleBootstrapService`](../../ahis.template.identity/Services/IdentityRoleBootstrapService.cs) seeds the protected `Superadmin` and `User` roles and performs one-time first-administrator promotion from `Identity:Bootstrap:SuperadminEmail`. [`IdentityRoleManagementService`](../../ahis.template.identity/Services/IdentityRoleManagementService.cs) owns `RoleManager`, `UserManager`, transactions, proof checks, direct assignment changes, and token-state invalidation. [`AdminIdentityRolesController`](../../ahis.template.api/Controllers/v1/AdminIdentityRolesController.cs) and [`AdminIdentityController`](../../ahis.template.api/Controllers/v1/AdminIdentityController.cs) expose the routes. The relational concurrency and endpoint authorization test coverage described in the approved blueprint remains pending.
+Implementation evidence (2026-09-29): [`IdentityRoleBootstrapService`](../../ahis.template.identity/Services/IdentityRoleBootstrapService.cs) seeds the protected `Superadmin` and `User` roles and performs one-time first-administrator promotion from `Identity:Bootstrap:SuperadminEmail`. [`IdentityRoleManagementService`](../../ahis.template.identity/Services/IdentityRoleManagementService.cs) owns `RoleManager`, `UserManager`, transactions, proof checks, direct assignment changes, and token-state invalidation. [`AdminIdentityRolesController`](../../ahis.template.api/Controllers/v1/AdminIdentityRolesController.cs) and [`AdminIdentityController`](../../ahis.template.api/Controllers/v1/AdminIdentityController.cs) expose the routes. Selected HTTP policy and LocalDB concurrency cases were added on 2026-09-30; see the [test runbook](../guides/identity-security-test-runbook.md) for exact coverage and limits.
 
 ### Role catalog endpoints
 
@@ -261,7 +261,7 @@ Implementation evidence (2026-09-29): [`IdentityRoleBootstrapService`](../../ahi
   - [x] Support bounded pagination and optional normalized-name filtering.
   - [x] Return role ID, name, protected status, and assignment count without concurrency values.
 - [x] `GET /api/admin/identity/roles/{roleId}`
-  - [x] Return role details with an empty v1 permissions collection and opaque ETag.
+  - [x] Return role details with the current allow-listed permissions collection and opaque ETag. (Confirmed in source 2026-09-30)
   - [x] Return a consistent not-found response without unrelated user data.
 - [x] `POST /api/admin/identity/roles`
   - [x] Require the role-management policy and recent step-up authentication.
@@ -294,14 +294,15 @@ An atomic `PUT` is recommended for assignment because it gives the server one va
 
 ### Optional human-user permission endpoints
 
-Only add these if the approved authorization model uses permissions in addition to roles:
+The approved human-user permission model adds these endpoints alongside roles:
 
 - [x] `GET /api/admin/identity/roles/{roleId}/permissions`
 - [x] `PUT /api/admin/identity/roles/{roleId}/permissions`
+- [x] `GET /api/admin/identity/permissions` returns the server-owned permission catalog under `IdentityRoleReadPolicy`. (Confirmed in source 2026-09-30; [controller](../../ahis.template.api/Controllers/v1/AdminIdentityPermissionsController.cs), [handler](../../ahis.template.application/Features/IdentityRoleManagementFeatures/IdentityRoleManagementRequests.cs), [approved blueprint](../blueprints/2026-09-29-p2-human-user-permissions.md))
 - [x] Define a canonical, allow-listed permission catalog rather than accepting arbitrary claim types or values: `country.read` and `country.write`.
 - [x] Emit human-user permissions as `human_permission`, distinct from API-client `api_permission` claims.
 - [x] Invalidate authorization state for all assigned users after a permission change.
-- [ ] Add policy-level tests proving that roles and permissions are actually applied to protected actions. The user reports that the 2026-09-30 human-user permission runbook passed; relational role-permission tests pass; automated HTTP policy coverage remains pending.
+- [x] Add policy-level tests proving that roles and permissions are applied to protected actions. [HTTP tests](../../ahis.template.test/TestFeatures/IdentityFeature/IdentityPolicyTest.cs) passed on 2026-09-30 with real bearer middleware and API-key scheme selection; they cover administrator reads, Country read/write, direct-claim exclusion on real login, token invalidation, and bearer precedence. The [runbook](../guides/identity-security-test-runbook.md) identifies test-only mediator responses and remaining coverage limits.
 
 Do not provide a general-purpose endpoint that lets administrators write arbitrary claims. Claim types and values should be constrained by a server-owned catalog.
 
@@ -344,7 +345,7 @@ Add one row when an item moves beyond backlog status.
 | P0 refresh-token/session model | Implemented in source; deployment unverified | Approved 2026-09-21 | 2026-09-21 | Hashed rotation lineage, opaque sessions, replay invalidation, and daily cleanup exist. `ReplaceRefreshTokensWithHashedSessionModel` application was not independently verified. |
 | P0 existing endpoint hardening | Implemented in source; deployment unverified | Approved 2026-09-21 | 2026-09-21 | Purpose-bound password setup, protected 2FA challenge, canonical refresh cookie, and public rate limits exist. `RemoveApplicationUserRecoveryCodes` application was not independently verified. |
 | Step-up authentication                 | Implemented | Approved 2026-09-21 | 2026-09-21 | Five-minute proof bound to the user and current security version                                                                                                                                                                                                                                                                                                                                        |
-| Revoke every session                   | Implemented | Approved 2026-09-22 | 2026-09-22 | [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) revokes the authenticated user's current and other sessions with a step-up proof; the Identity security version invalidates access tokens and proofs. EF Core references were aligned to `8.0.22` after a mixed-version runtime failure. Focused tests (2) and the full suite (16) passed; relational concurrency verification remains pending. |
+| Revoke every session                   | Implemented | Approved 2026-09-22 | 2026-09-22 | [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) revokes the authenticated user's current and other sessions with a step-up proof; the Identity security version invalidates access tokens and proofs. EF Core references were aligned to `8.0.22` after a mixed-version runtime failure. The 2026-09-30 LocalDB suite passed the tested refresh/revoke-all race; broader interleavings remain unverified. |
 | View active sessions                   | Implemented (metadata deferred) | Approved 2026-09-22 | 2026-09-22 | Authenticated, paginated owner-only listing of active sessions; access-token session claim identifies the current row. Device, IP, and location collection remain deferred pending privacy and retention policy. |
 | Revoke one session | Implemented | — | 2026-09-22 | `DELETE /api/account/sessions/{sessionId}` is implemented in [AccountController](../../ahis.template.api/Controllers/v1/AccountController.cs) and [AccountService](../../ahis.template.identity/Services/AccountService.cs); [handler tests](../../ahis.template.test/TestFeatures/AccountFeature/RevokeSessionCommandHandlerTest.cs) cover routing and proof forwarding. |
 | Security summary | Implemented | — | 2026-09-22 | `GET /api/account/security-summary` is implemented in [AccountController](../../ahis.template.api/Controllers/v1/AccountController.cs) and [AccountService](../../ahis.template.identity/Services/AccountService.cs); [handler tests](../../ahis.template.test/TestFeatures/AccountFeature/GetSecuritySummaryQueryHandlerTest.cs) cover projection and routing. |
@@ -356,7 +357,8 @@ Add one row when an item moves beyond backlog status.
 | Administrative Identity controls       | Partially implemented | Approved 2026-09-25 | 2026-09-25 | `GET /api/admin/identity/users/{userId}/security-state` requires `IdentityAdminSecurityReadPolicy` and the `Superadmin` role, returns a redacted security-state projection, and records a target-scoped view audit. `POST /api/admin/identity/users/{userId}/revoke-sessions` requires a dedicated bearer `Superadmin` policy and current actor-bound proof, then atomically invalidates target access and refresh sessions without notification; post-commit target-scoped auditing is best effort. `POST /api/admin/identity/users/{userId}/unlock` requires a dedicated bearer `Superadmin` policy and actor-bound proof, rejects self-unlock and non-current ordinary lockouts, and records the closed restriction plus post-commit notification/audit attempts. Role-store consolidation, protected role seeding, dedicated RBAC policies, one-time administrator bootstrap, role catalog, and direct assignment endpoints are implemented. |
 | Role-store consolidation | Implemented in source; user-reported applied | [2026-09-29 revision](../blueprints/2026-09-29-rbac-role-store-consolidation-revision.md) | 2026-09-29 | `IdentityRole` is the single configured role entity and table; the guarded migration was reported applied to one database, without independent inspection. |
 | RBAC foundation and bootstrap | Implemented in source; user-reported migration applied | [2026-09-29 foundation](../blueprints/2026-09-29-rbac-foundation-bootstrap.md) | 2026-09-29 | Protected `Superadmin` and `User` roles, three dedicated bearer policies, durable one-time bootstrap marker, and existing-user promotion are implemented. The user reports successful database application and bootstrap testing. |
-| User role management | Implemented in source; manually verified | [2026-09-30 human permissions](../blueprints/2026-09-29-p2-human-user-permissions.md) | 2026-09-30 | Role catalog, direct assignments, and custom-role `country.read`/`country.write` permissions use the dedicated Identity service. Permission writes require bearer Superadmin authorization, actor-bound step-up proof, and role ETag; they invalidate assigned users' access and refresh sessions and audit sorted permission deltas. The user reports successful execution of the human-user permission runbook on 2026-09-30; LocalDB role-permission tests pass. Automated HTTP authorization/policy and concurrent-demotion coverage remain pending. |
+| User role management | Implemented in source; manually and automatically verified in selected cases | [2026-09-30 human permissions](../blueprints/2026-09-29-p2-human-user-permissions.md) | 2026-09-30 | Role catalog, direct assignments, and custom-role `country.read`/`country.write` permissions use the dedicated Identity service. Permission writes require bearer Superadmin authorization, actor-bound step-up proof, and role ETag; they invalidate assigned users' access and refresh sessions and audit sorted permission deltas. The user reports successful execution of the human-user permission runbook. The 2026-09-30 [test runbook](../guides/identity-security-test-runbook.md) records passing HTTP policy, JWT provenance/invalidation, and selected LocalDB demotion/permission races; other interleavings remain unverified. |
+| Identity security policy/concurrency verification | Selected cases verified on LocalDB | [Approved 2026-09-30](../blueprints/2026-09-30-identity-security-pending-verification.md) | 2026-09-30 | [Runbook](../guides/identity-security-test-runbook.md): 32 focused and 94 full-suite tests passed on SQL Server 2019 LocalDB 15.0.4382.1. No deployed database, alternate SQL Server engine, or all possible race schedules were verified. |
 | Passkey/WebAuthn support               | Optional    | —                   | —          | Separate initiative                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## Source observations behind this backlog
@@ -367,8 +369,8 @@ Add one row when an item moves beyond backlog status.
 - [`AccountService`](../../ahis.template.identity/Services/AccountService.cs) invalidates sessions after password change and authenticator disable; JWT validation consumes the resulting version.
 - [`AccountController`](../../ahis.template.api/Controllers/v1/AccountController.cs) exposes initial password setup publicly only through a purpose-bound token flow; callers cannot select an account by user ID alone.
 - [`AuthenticationController`](../../ahis.template.api/Controllers/v1/AuthenticationController.cs) no longer exposes token encode/decode or account-state diagnostic routes.
-- [`Program.cs`](../../ahis.template.api/Program.cs) registers ASP.NET Core Identity roles, while [`AuthenticationService`](../../ahis.template.identity/Services/AuthenticationService.cs) copies current user roles into issued JWTs.
-- [`IdentityContext`](../../ahis.template.identity/Contexts/IdentityContext.cs) maps Identity roles, user-role assignments, and role claims, but no confirmed controller, mediator request, or Identity service contract manages them.
+- [`Program.cs`](../../ahis.template.api/Program.cs) registers ASP.NET Core Identity roles and authorization policies, while [`AuthenticationService`](../../ahis.template.identity/Services/AuthenticationService.cs) copies current user roles and allow-listed human-user permissions into issued JWTs.
+- [`IdentityContext`](../../ahis.template.identity/Contexts/IdentityContext.cs) maps Identity roles, user-role assignments, and role claims. [`AdminIdentityRolesController`](../../ahis.template.api/Controllers/v1/AdminIdentityRolesController.cs), [`AdminIdentityController`](../../ahis.template.api/Controllers/v1/AdminIdentityController.cs), and [`AdminIdentityPermissionsController`](../../ahis.template.api/Controllers/v1/AdminIdentityPermissionsController.cs) expose the implemented role, assignment, and allow-listed permission operations through mediator requests and [`IIdentityRoleManagementService`](../../ahis.template.identity/Interfaces/IIdentityRoleManagementService.cs).
 - The initial Identity migration created both `AspNetRoles` and `IdentityRoles`. `ConsolidateIdentityRoleStore` maps the configured role type to `IdentityRole` and removes the empty duplicate table; application to one database was reported on 2026-09-29 but not independently verified.
 
 These are implementation observations, not owner-confirmed product requirements.
