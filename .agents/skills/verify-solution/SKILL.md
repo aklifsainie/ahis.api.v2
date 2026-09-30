@@ -14,4 +14,4 @@ Preferred sequence:
 3. Build `AhisApiTemplate.sln --no-restore`.
 4. Run `dotnet test .\AhisApiTemplate.sln --no-build --no-restore`.
 
-The Country handler test is an example only; do not use it as focused validation for unrelated work. If no focused test exists, report the gap and continue with the applicable project/solution check. Report commands, exit codes, test totals, warnings, and environmental blockers. Distinguish pre-existing failures when evidence permits. Never run database updates, destructive cleanup, production services, or commands requiring live secrets.
+The Country handler test is one focused example only; the suite also contains Identity-service, authorization-policy, concurrency, and API-host coverage, some of which require SQL Server LocalDB. Select the closest relevant test or report the coverage gap, then continue with applicable project/solution checks. Report commands, exit codes, test totals, warnings, LocalDB/environmental constraints, and pre-existing failures when evidence permits. Never run database updates, destructive cleanup, production services, or commands requiring live secrets.

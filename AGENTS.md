@@ -11,9 +11,9 @@ This is a .NET 8 ASP.NET Core Web API template for accounts, authentication, API
 - `ahis.template.domain`: shared entities, view models, enums, and `IUnitOfWork`.
 - `ahis.template.infrastructure`: application EF Core context, migrations, repositories, API-key implementation, and auditing.
 - `ahis.template.identity`: ASP.NET Core Identity entities, services, context, and migrations.
-- `ahis.template.test`: xUnit handler unit tests.
+- `ahis.template.test`: xUnit handler, Identity-service, LocalDB-backed policy/concurrency, and API-host tests.
 
-The actual graph is `API -> Application, Identity, Infrastructure`; `Infrastructure -> Application, Domain`; `Application -> Domain, Identity`; `Identity -> Domain`; and `Tests -> Application, Domain`. This is not strict Clean Architecture: Application consumes Identity contracts. See [project map](docs/architecture/project-map.md) and [dependency rules](docs/architecture/dependency-rules.md).
+The actual graph is `API -> Application, Identity, Infrastructure`; `Infrastructure -> Application, Domain`; `Application -> Domain, Identity`; `Identity -> Domain`; and `Tests -> API, Application, Domain, Identity`. This is not strict Clean Architecture: Application consumes Identity contracts. See [project map](docs/architecture/project-map.md) and [dependency rules](docs/architecture/dependency-rules.md).
 
 ## Modules and local guidance
 
@@ -22,8 +22,9 @@ The actual graph is `API -> Application, Identity, Infrastructure`; `Infrastruct
 - [API-client authentication](docs/modules/api-client-authentication.md): `ahis.template.application/Features/ApiKeyAuthenticationFeatures`; read its `AGENTS.md`.
 - [Country](docs/modules/country.md): `ahis.template.application/Features/CountryFeatures`; read its `AGENTS.md`.
 - [Audit](docs/modules/audit.md): `ahis.template.application/Features/AuditLogFeatures`; read its `AGENTS.md` when that module is affected.
+- [Identity administration](docs/modules/identity-administration.md): `ahis.template.application/Features/IdentityRoleManagementFeatures`; read its `AGENTS.md`.
 
-Use Country as the simple repository/unit-of-work pattern, Account and Authentication as Identity-service patterns, and API-client administration only as its documented direct-service variation. The audit query's `IQueryable`/EF execution in Application is an exception, not a default.
+Use Country as the simple repository/unit-of-work pattern, Account, Authentication, and Identity administration as Identity-service patterns, and API-client administration only as its documented direct-service variation. The audit query's `IQueryable`/EF execution in Application is an exception, not a default.
 
 ## Change planning and approval
 

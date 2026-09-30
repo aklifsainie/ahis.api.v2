@@ -7,7 +7,7 @@ API -> Application, Identity, Infrastructure
 Infrastructure -> Application, Domain
 Application -> Domain, Identity
 Identity -> Domain
-Tests -> Application, Domain
+Tests -> API, Application, Domain, Identity
 ```
 
 Domain has no project references. Application owns request orchestration, mediator abstractions, and application persistence contracts. Infrastructure implements application persistence and integration contracts. Identity owns both its service interfaces and implementations, and Application consumes those interfaces directly. API is the composition root.
