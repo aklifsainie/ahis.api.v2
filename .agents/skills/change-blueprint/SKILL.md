@@ -11,7 +11,7 @@ Use this skill when a request asks for planning, design, or a blueprint for a re
 
 1. Identify the owning module, affected behavior, applicable business rules, contracts, persistence, integrations, tests, and documentation.
 2. Create one complete Markdown blueprint under `docs/blueprints/` with a unique `YYYY-MM-DD-short-feature-slug.md` filename. Do not overwrite an existing blueprint; use a dated revision suffix when revising one.
-3. Include the applicable sections below and label confirmed facts, observed invariants, inferences, assumptions, risks, and open decisions.
+3. Include the applicable sections below and label confirmed facts, observed invariants, inferences, assumptions, risks, and open decisions. State whether the file is **ready for approval** or a **draft with blockers**. A blocker is an unresolved decision that affects implementation, security, public behavior, or acceptance criteria; record its concrete question, known decisions, and minimum missing value. Keep nonblocking risks separate.
 4. Stop after saving the blueprint. Do not edit implementation code, create migrations, apply a database update, commit, push, deploy, or publish.
 
 Include these sections, omitting only those that do not apply:
@@ -37,10 +37,10 @@ Request explicit approval before architecture, module-boundary, public-API, busi
 
 ## Approval and response
 
-The saved Markdown file is the blueprint of record. Approval applies only to the reviewed file revision. If it changes materially after approval, save and obtain approval of a revised blueprint before implementation.
+The saved Markdown file is the blueprint of record. Approval applies only to a reviewed, ready-for-approval file revision. A draft with blockers is not implementation authority. Carry confirmed decisions into revisions; do not reopen them unless new repository evidence creates a stated conflict. If the file changes materially after approval, save and obtain approval of a revised blueprint before implementation.
 
-After confirming the file exists, reply only:
+For a ready blueprint, after confirming the file exists, reply only:
 
 `Blueprint completed and saved to '<repository-relative-path>'.`
 
-Do not repeat the blueprint content in chat.
+Do not repeat the blueprint content in chat. For a blocked draft, report its saved path, that it is not ready for implementation approval, and only its concrete outstanding blockers.

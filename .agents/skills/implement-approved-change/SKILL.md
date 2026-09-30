@@ -5,7 +5,7 @@ description: Implement an approved AHIS API Template blueprint with one writer, 
 
 # Implement Approved Change
 
-Confirm the active request or approved blueprint covers the exact material effects. Read the root and owning-module instructions, inspect current status, and preserve unrelated user changes. One writer owns implementation files.
+Confirm the active request approves a saved blueprint revision explicitly marked ready for approval and covers the exact material effects. Read the root and owning-module instructions, inspect current status, and preserve unrelated user changes. One writer owns implementation files.
 
 Implement the smallest coherent change using the documented module pattern. Stop and revise the blueprint if discovery reveals a material API, behavior, security, authorization, schema, migration, dependency, integration, or production-configuration change.
 
