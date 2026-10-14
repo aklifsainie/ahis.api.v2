@@ -17,6 +17,7 @@ namespace ahis.template.identity.Contexts
         public DbSet<AccountRecoveryThrottle> AccountRecoveryThrottles { get; set; }
         public DbSet<IdentityUserRestriction> IdentityUserRestrictions { get; set; }
         public DbSet<IdentityRoleBootstrapState> IdentityRoleBootstrapStates { get; set; }
+        public DbSet<FirstSuperadminBootstrap> FirstSuperadminBootstraps { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -146,6 +147,15 @@ namespace ahis.template.identity.Contexts
                     .WithMany()
                     .HasForeignKey(x => x.TargetUserId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            builder.Entity<FirstSuperadminBootstrap>(b =>
+            {
+                b.ToTable("FirstSuperadminBootstrap", table =>
+                    table.HasCheckConstraint("CK_FirstSuperadminBootstrap_Id", "[Id] = 1"));
+                b.HasKey(x => x.Id);
+                b.Property(x => x.TargetUserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.CompletedAtUtc).IsRequired();
             });
         }
     }
