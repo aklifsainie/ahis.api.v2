@@ -23,6 +23,9 @@ namespace ahis.template.identity.Models.Entities
         /// </summary>
         public bool IsAccountConfigured { get; set; } = false;
 
+        /// <summary>Requires a successful password reset before password based access is allowed.</summary>
+        public bool MustResetPassword { get; set; } = false;
+
         /// <summary>
         /// The date of the user verified their email address.
         /// </summary>
@@ -43,12 +46,6 @@ namespace ahis.template.identity.Models.Entities
         /// </summary>
         [MaxLength(1000)]
         public string? AuthenticatorUri { get; set; }
-
-        /// <summary>
-        /// Serialized recovery codes (e.g. JSON array or encrypted blob). Use a secure storage/encryption.
-        /// </summary>
-        [MaxLength(4000)]
-        public string? RecoveryCodes { get; set; }
 
         /// <summary>
         /// Timestamp when two-factor authentication was enabled.

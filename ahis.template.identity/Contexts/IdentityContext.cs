@@ -12,20 +12,29 @@ namespace ahis.template.identity.Contexts
         }
 
         public DbSet<RefreshToken> RefreshTokens { get; set; }
+        public DbSet<RefreshSession> RefreshSessions { get; set; }
+        public DbSet<AccountRecoveryChallenge> AccountRecoveryChallenges { get; set; }
+        public DbSet<AccountRecoveryThrottle> AccountRecoveryThrottles { get; set; }
+        public DbSet<IdentityUserRestriction> IdentityUserRestrictions { get; set; }
+        public DbSet<IdentityRoleBootstrapState> IdentityRoleBootstrapStates { get; set; }
+        public DbSet<FirstSuperadminBootstrap> FirstSuperadminBootstraps { get; set; }
+        public DbSet<PasskeyCredential> PasskeyCredentials { get; set; }
+        public DbSet<PasskeyCeremony> PasskeyCeremonies { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
             base.OnModelCreating(builder);
 
-            // Rename default AspNet* tables to remove AspNet prefix
+            // Map the configured role type, not its generic base type.
             builder.Entity<ApplicationUser>(b =>
             {
                 b.ToTable("IdentityUsers");
+                b.Property(x => x.MustResetPassword).HasDefaultValue(false).IsRequired();
             });
 
-            builder.Entity<IdentityRole<string>>(b =>
+            builder.Entity<IdentityRole>(b =>
             {
-                b.ToTable("IdentityRoles");
+                b.ToTable("IdentityRole");
             });
 
             builder.Entity<IdentityUserRole<string>>(b =>
@@ -58,9 +67,134 @@ namespace ahis.template.identity.Contexts
             {
                 b.ToTable("RefreshTokens");
                 b.HasKey(x => x.Id);
-                b.Property(x => x.Token).IsRequired().HasMaxLength(450);
+                b.Property(x => x.TokenHash).IsRequired().HasColumnType("binary(32)");
+                b.Property(x => x.SecurityVersion).HasMaxLength(64);
                 b.Property(x => x.IsRevoked).HasDefaultValue(false);
                 b.HasIndex(x => x.UserId);
+                b.HasIndex(x => x.TokenHash).IsUnique();
+                b.HasIndex(x => x.ParentTokenId).IsUnique().HasFilter("[ParentTokenId] IS NOT NULL");
+                b.HasIndex(x => new { x.SessionId, x.IsRevoked, x.ExpiresAt });
+                b.HasOne<RefreshSession>()
+                    .WithMany()
+                    .HasForeignKey(x => x.SessionId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                b.HasOne<RefreshToken>()
+                    .WithMany()
+                    .HasForeignKey(x => x.ParentTokenId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            builder.Entity<RefreshSession>(b =>
+            {
+                b.ToTable("RefreshSessions");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.PublicId).IsRequired();
+                b.Property(x => x.UserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.IsRevoked).HasDefaultValue(false);
+                b.HasIndex(x => x.PublicId).IsUnique();
+                b.HasIndex(x => new { x.UserId, x.IsRevoked, x.ExpiresAt });
+            });
+
+            builder.Entity<AccountRecoveryChallenge>(b =>
+            {
+                b.ToTable("AccountRecoveryChallenges");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.ChallengeHash).IsRequired().HasColumnType("binary(32)");
+                b.Property(x => x.SecurityVersion).IsRequired().HasMaxLength(64);
+                b.HasIndex(x => x.ChallengeHash).IsUnique();
+                b.HasIndex(x => new { x.UserId, x.ConsumedAt, x.ExpiresAt });
+            });
+
+            builder.Entity<AccountRecoveryThrottle>(b =>
+            {
+                b.ToTable("AccountRecoveryThrottles");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.SubjectHash).IsRequired().HasMaxLength(64);
+                b.HasIndex(x => x.SubjectHash).IsUnique();
+            });
+
+            builder.Entity<IdentityUserRestriction>(b =>
+            {
+                b.ToTable("IdentityUserRestrictions");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.UserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.Category).IsRequired();
+                b.Property(x => x.StartedAtUtc).IsRequired();
+                b.Property(x => x.Origin).IsRequired().HasMaxLength(100);
+                b.Property(x => x.PlacedByUserId).HasMaxLength(450);
+                b.Property(x => x.EndedByUserId).HasMaxLength(450);
+                b.Property(x => x.ReviewedByUserId).HasMaxLength(450);
+                b.Property(x => x.EvidenceReference).HasMaxLength(500);
+                b.Property(x => x.InternalReasonCode).HasMaxLength(100);
+                b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+                b.HasIndex(x => x.UserId).HasFilter("[EndedAtUtc] IS NULL").IsUnique();
+                b.HasIndex(x => new { x.UserId, x.StartedAtUtc });
+                b.HasIndex(x => new { x.Category, x.EndedAtUtc });
+                b.ToTable(t => t.HasCheckConstraint("CK_IdentityUserRestrictions_CategoryExpiry",
+                    "([Category] = 1 AND [ExpiresAtUtc] IS NOT NULL) OR ([Category] IN (2, 3) AND [ExpiresAtUtc] IS NULL)"));
+                b.ToTable(t => t.HasCheckConstraint("CK_IdentityUserRestrictions_EndConsistency",
+                    "[EndedAtUtc] IS NULL OR [EndedAtUtc] >= [StartedAtUtc]"));
+            });
+
+            builder.Entity<IdentityRoleBootstrapState>(b =>
+            {
+                b.ToTable("IdentityRoleBootstrapState", table =>
+                    table.HasCheckConstraint(
+                        "CK_IdentityRoleBootstrapState_Singleton",
+                        "[Id] = 1"));
+                b.HasKey(x => x.Id);
+                b.Property(x => x.Id).ValueGeneratedNever();
+                b.Property(x => x.TargetUserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.CompletedAtUtc).IsRequired();
+                b.HasOne<ApplicationUser>()
+                    .WithMany()
+                    .HasForeignKey(x => x.TargetUserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            builder.Entity<FirstSuperadminBootstrap>(b =>
+            {
+                b.ToTable("FirstSuperadminBootstrap", table =>
+                    table.HasCheckConstraint("CK_FirstSuperadminBootstrap_Id", "[Id] = 1"));
+                b.HasKey(x => x.Id);
+                b.Property(x => x.TargetUserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.CompletedAtUtc).IsRequired();
+            });
+
+            builder.Entity<PasskeyCredential>(b =>
+            {
+                b.ToTable("PasskeyCredentials");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.CredentialId).IsRequired().HasMaxLength(1024);
+                b.Property(x => x.UserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.PublicKey).IsRequired();
+                b.Property(x => x.DisplayName).IsRequired().HasMaxLength(80);
+                b.Property(x => x.CreatedAtUtc).IsRequired();
+                b.Property(x => x.IsBackupEligible).HasDefaultValue(false);
+                b.Property(x => x.IsBackedUp).HasDefaultValue(false);
+                b.HasIndex(x => x.CredentialId).IsUnique();
+                b.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+                b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            builder.Entity<PasskeyCeremony>(b =>
+            {
+                b.ToTable("PasskeyCeremonies", table => table.HasCheckConstraint("CK_PasskeyCeremonies_Purpose", "[Purpose] IN (1, 2)"));
+                b.HasKey(x => x.Id);
+                b.Property(x => x.ChallengeReferenceHash).IsRequired().HasColumnType("binary(32)");
+                b.Property(x => x.ChallengeHash).IsRequired().HasColumnType("binary(32)");
+                b.Property(x => x.Purpose).IsRequired();
+                b.Property(x => x.UserId).HasMaxLength(450);
+                b.Property(x => x.SecurityVersion).HasMaxLength(64);
+                b.Property(x => x.RpConfigurationId).IsRequired().HasMaxLength(100);
+                b.Property(x => x.RateLimitKeyHash).IsRequired().HasMaxLength(64);
+                b.Property(x => x.UserRateLimitKeyHash).HasMaxLength(64);
+                b.Property(x => x.CreatedAtUtc).IsRequired();
+                b.Property(x => x.OptionsJson).IsRequired();
+                b.Property(x => x.ProtectedChallenge).IsRequired();
+                b.HasIndex(x => x.ChallengeReferenceHash).IsUnique();
+                b.HasIndex(x => new { x.Purpose, x.UserId, x.ExpiresAtUtc, x.ConsumedAtUtc });
+                b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
             });
         }
     }

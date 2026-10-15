@@ -30,3 +30,12 @@ AuditLogController -> custom mediator -> GetAuditLogQueryHandler
 ```
 
 The first is a direct-service administrative variation. The second couples Application to EF query execution. Preserve them as explicit exceptions rather than copying either flow by default.
+
+## Identity administration
+
+```text
+Admin identity controllers -> custom IMediator -> IdentityRoleManagementHandler
+-> IIdentityRoleManagementService -> RoleManager / UserManager / IdentityContext
+```
+
+Role and permission writes require the applicable bearer policy and actor-bound step-up proof. The Identity service owns protected-role checks, concurrency, membership changes, and token/session invalidation; the handler maps results and attempts redacted explicit audit events after successful material changes. See the [Identity administration module guide](../modules/identity-administration.md).

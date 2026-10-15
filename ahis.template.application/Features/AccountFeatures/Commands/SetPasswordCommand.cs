@@ -12,6 +12,9 @@ namespace ahis.template.application.Features.AccountFeatures.Commands
         public string UserId { get; set; } = null!;
 
         [Required]
+        public string Token { get; set; } = null!;
+
+        [Required]
         public string Password { get; set; } = null!;
     }
 
@@ -29,21 +32,12 @@ namespace ahis.template.application.Features.AccountFeatures.Commands
 
         public async Task<Result> Handle(SetPasswordCommand request, CancellationToken cancellationToken)
         {
-            _logger.LogInformation(
-                "Setting password for user {UserId}",
-                request.UserId
-            );
-
             var result = await _accountService
-                .SetPasswordFirstTimeAsync(request.UserId, request.Password);
+                .SetPasswordFirstTimeAsync(request.UserId, request.Token, request.Password, cancellationToken);
 
             if (!result.IsSuccess)
             {
-                _logger.LogWarning(
-                    "Failed to set password for user {UserId}: {Error}",
-                    request.UserId,
-                    result.Errors.FirstOrDefault()?.Message
-                );
+                _logger.LogWarning("Initial password setup failed.");
 
                 return Result.Fail(
                     result.Errors.FirstOrDefault()?.Message

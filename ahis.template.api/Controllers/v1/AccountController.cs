@@ -1,8 +1,11 @@
 ﻿using ahis.template.application.Features.AccountFeatures.Commands;
 using ahis.template.application.Features.AccountFeatures.Queries;
+using ahis.template.application.Features.AuthenticationFeatures.Commands;
+using ahis.template.api.Security;
 using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
 using ahis.template.domain.Models.ViewModels.AccountVM;
+using ahis.template.identity.Models.DTOs;
 using FluentResults;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity.Data;
@@ -35,6 +38,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="400">Invalid registration request</response>
         /// <response code="500">Unexpected internal server error</response>
         [HttpPost("register")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -66,6 +70,31 @@ namespace ahis.template.api.Controllers.v1
             return NoContent(); //NoContent return 204
         }
 
+        /// <summary>Starts password recovery through the account's verified email address.</summary>
+        [HttpPost("recovery/start")]
+        [AllowAnonymous]
+        [EnableRateLimiting("RecoveryPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> StartRecovery([FromBody] StartAccountRecoveryCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
+        }
+
+        /// <summary>Completes password recovery using the emailed challenge and required MFA evidence.</summary>
+        [HttpPost("recovery/complete")]
+        [AllowAnonymous]
+        [EnableRateLimiting("RecoveryPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> CompleteRecovery([FromBody] CompleteAccountRecoveryCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
+        }
+
         /// <summary>
         /// Confirm user email
         /// </summary>
@@ -77,6 +106,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="400">Invalid or expired confirmation token</response>
         /// <response code="500">Unexpected internal server error</response>
         [HttpPost("confirm-email")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -112,7 +142,7 @@ namespace ahis.template.api.Controllers.v1
         /// Set user password
         /// </summary>
         /// <remarks>
-        /// Allows the user to set a password after email verification.
+        /// Sets a password with the short-lived setup token sent after email confirmation.
         /// </remarks>
         /// <param name="command">Password setup data</param>
         /// <response code="204">Password set successfully with no response contents</response>
@@ -120,6 +150,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="401">Unauthorized</response>
         /// <response code="500">Unexpected internal server error</response>
         [HttpPost("set-password")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -210,6 +241,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         [Produces("application/json")]
         [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         public async Task<IActionResult> GenerateAuthenticatorSetup()
         {
             var result = await _mediator.Send(new GenerateAuthenticatorSetupCommand());
@@ -263,9 +295,7 @@ namespace ahis.template.api.Controllers.v1
         /// </ul>
         /// </remarks>
         /// <param name="command">
-        /// Payload containing:
-        /// <br/>• <c>UserId</c> – authenticated user's ID
-        /// <br/>• <c>VerificationCode</c> – 6-digit code from authenticator app
+        /// Payload containing a 6-digit authenticator verification code for the authenticated user.
         /// </param>
         /// <response code="200">Two-factor authentication enabled successfully</response>
         /// <response code="400">Invalid verification code or invalid request</response>
@@ -278,6 +308,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         [Produces("application/json")]
         [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         public async Task<IActionResult> EnableAuthenticator([FromBody] EnableTwoFactorCommand command)
         {
             var result = await _mediator.Send(command);
@@ -312,6 +343,7 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="500">Unexpected internal server error</response>
         [HttpPost("disable-2fa")]
         [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         public async Task<IActionResult> DisableAuthenticator()
         {
             var result = await _mediator.Send(new DisableTwoFactorCommand());
@@ -355,7 +387,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
         public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordCommand command)
         {
             var result = await _mediator.Send(
@@ -386,6 +418,192 @@ namespace ahis.template.api.Controllers.v1
             return NoContent();
         }
 
+        [HttpPost("re-authenticate")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> Reauthenticate([FromBody] ReauthenticateCommand command)
+        {
+            var result = await _mediator.Send(command);
+            if (result.IsFailed)
+                return ToValidationProblem(result);
+
+            return Ok(new { stepUpProof = result.Value });
+        }
+
+        /// <summary>Revokes every refresh session for the current account.</summary>
+        /// <remarks>
+        /// Requires a current five-minute step-up proof. The caller's session is included,
+        /// so the client must sign in again after this operation succeeds.
+        /// </remarks>
+        [HttpPost("sessions/revoke-all")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> RevokeAllSessions([FromBody] RevokeAllSessionsCommand command)
+        {
+            var result = await _mediator.Send(command, HttpContext.RequestAborted);
+            if (result.IsFailed)
+            {
+                if (result.Errors.Any(error => error.Metadata.ContainsKey("OperationalFailure")))
+                    return Problem(statusCode: StatusCodes.Status500InternalServerError);
+
+                return ToValidationProblem(result);
+            }
+
+            ClearRefreshCookie();
+            return NoContent();
+        }
+
+        /// <summary>Revokes one refresh session for the authenticated account.</summary>
+        /// <remarks>
+        /// Revoking a different session requires a current step-up proof in the <c>X-Step-Up-Proof</c>
+        /// request header. Repeated, missing, and other-account session identifiers return the same
+        /// successful response. Revoking the current session also clears its refresh cookie.
+        /// </remarks>
+        [HttpDelete("sessions/{sessionId:guid}")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> RevokeSession(
+            Guid sessionId,
+            [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof)
+        {
+            var result = await _mediator.Send(
+                new RevokeSessionCommand { SessionId = sessionId, StepUpProof = stepUpProof },
+                HttpContext.RequestAborted);
+            if (result.IsFailed)
+            {
+                if (result.Errors.Any(error => error.Metadata.ContainsKey("OperationalFailure")))
+                    return Problem(statusCode: StatusCodes.Status500InternalServerError);
+
+                return ToValidationProblem(result);
+            }
+
+            if (result.Value)
+                ClearRefreshCookie();
+
+            return NoContent();
+        }
+
+        /// <summary>Lists active refresh sessions for the authenticated account.</summary>
+        /// <remarks>
+        /// Session identifiers are opaque. Device and location information are not collected or returned.
+        /// </remarks>
+        [HttpGet("sessions")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(typeof(PagedResponseDto<List<ActiveSessionResponseVM>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> GetActiveSessions([FromQuery] GetActiveSessionsQuery query)
+        {
+            var result = await _mediator.Send(query, HttpContext.RequestAborted);
+            return ToPagedActionResult(result);
+        }
+
+        /// <summary>Gets credential and session state for the authenticated account.</summary>
+        /// <remarks>
+        /// This response contains only security state and counts. It never includes credentials,
+        /// authenticator keys, recovery codes, or token material.
+        /// </remarks>
+        [HttpGet("security-summary")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(typeof(ResponseDto<SecuritySummaryResponseVM>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> GetSecuritySummary()
+        {
+            var result = await _mediator.Send(new GetSecuritySummaryQuery(), HttpContext.RequestAborted);
+            return ToActionResult(result);
+        }
+
+        /// <summary>Replaces all recovery codes for the authenticated account.</summary>
+        /// <remarks>
+        /// Requires a current five-minute step-up proof. The returned recovery codes are shown only in
+        /// this response; save them securely before closing it. A later regeneration invalidates them.
+        /// </remarks>
+        [HttpPost("2fa/recovery-codes/regenerate")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(typeof(ResponseDto<IEnumerable<string>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        public async Task<IActionResult> RegenerateRecoveryCodes([FromBody] RegenerateRecoveryCodesCommand command)
+        {
+            var result = await _mediator.Send(command, HttpContext.RequestAborted);
+            if (result.IsFailed)
+                return ToValidationProblem(result);
+
+            Response.Headers.CacheControl = "no-store";
+            return ToActionResult(result);
+        }
+
+        [HttpPost("2fa/reset-authenticator")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> ResetAuthenticator([FromBody] ResetAuthenticatorCommand command)
+        {
+            var result = await _mediator.Send(command);
+            if (result.IsFailed)
+                return ToValidationProblem(result);
+
+            ClearRefreshCookie();
+            return NoContent();
+        }
+
+        [HttpPost("change-email/request")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> RequestEmailChange([FromBody] RequestEmailChangeCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
+        }
+
+        [HttpPost("change-email/confirm")]
+        [AllowAnonymous]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> ConfirmEmailChange([FromBody] ConfirmEmailChangeCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
+        }
+
+        [HttpPost("deactivate")]
+        [Authorize]
+        [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> Deactivate([FromBody] DeactivateAccountCommand command)
+        {
+            var result = await _mediator.Send(command);
+            if (result.IsFailed)
+                return ToValidationProblem(result);
+
+            ClearRefreshCookie();
+            return NoContent();
+        }
+
 
         /// <summary>
         /// Resends the email confirmation link.
@@ -395,11 +613,10 @@ namespace ahis.template.api.Controllers.v1
         /// - Response is always 204 to prevent user enumeration
         /// - Email is sent only if the account exists and is unconfirmed
         /// </remarks>
-        [Authorize]
         [HttpPost("resend-confirmation-email")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         public async Task<IActionResult> ResendConfirmationEmail([FromBody] ResendConfirmationEmailCommand command)
         {
             var result = await _mediator.Send(command);
@@ -449,6 +666,67 @@ namespace ahis.template.api.Controllers.v1
                 return Unauthorized();
 
             return Ok(result.Value);
+        }
+
+        private IActionResult ToValidationProblem(Result result)
+        {
+            foreach (var error in result.Errors)
+                ModelState.AddModelError("general", error.Message);
+
+            return ValidationProblem(ModelState);
+        }
+
+        private IActionResult ToValidationProblem<T>(Result<T> result)
+        {
+            foreach (var error in result.Errors)
+                ModelState.AddModelError("general", error.Message);
+
+            return ValidationProblem(ModelState);
+        }
+
+        private void ClearRefreshCookie()
+        {
+            RefreshCookie.Clear(Response);
+        }
+
+        [Authorize]
+        [HttpPost("passkeys/registration-options")]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> PasskeyRegistrationOptions(CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(new PasskeyRegistrationOptionsCommand(), cancellationToken);
+            return result.IsSuccess ? Ok(result.Value) : ToValidationProblem(result);
+        }
+
+        [Authorize]
+        [HttpPost("passkeys/registration-complete")]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> CompletePasskeyRegistration([FromBody] CompletePasskeyRegistrationCommand command, CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(command, cancellationToken);
+            return result.IsSuccess ? Ok(result.Value) : ToValidationProblem(result);
+        }
+
+        [Authorize]
+        [HttpGet("passkeys")]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> ListPasskeys(CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(new ListPasskeysQuery(), cancellationToken);
+            return result.IsSuccess ? Ok(result.Value) : ToValidationProblem(result);
+        }
+
+        [Authorize]
+        [HttpDelete("passkeys/{credentialId:guid}")]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> DeletePasskey(Guid credentialId, [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof, [FromBody] PasskeyRemovalEvidence body, CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(new DeletePasskeyCommand { CredentialId = credentialId, StepUpProof = stepUpProof, Password = body.Password, RecoveryCode = body.RecoveryCode }, cancellationToken);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
         }
 
 

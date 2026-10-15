@@ -20,5 +20,5 @@ Review changes against the owning module, its `AGENTS.md`, and the closest activ
 
 - Check tracking, soft-delete filters, uniqueness, pagination, transactions, early returns, migration context, and destructive/data risks.
 - Ensure auditable entities have keys available when the interceptor runs, and distinguish transactional automatic audits from best-effort explicit audits.
-- Select unit, integration, controller, or persistence coverage proportionate to the risk. The current suite is narrow Country-handler coverage; do not claim broader coverage.
+- Select unit, integration, controller, policy, concurrency, or persistence coverage proportionate to the risk. The suite includes Country-handler, Identity-service, LocalDB-backed policy/concurrency, and API-host checks; inspect the closest test rather than claiming coverage outside its scope.
 - Report evidence, uncertainty, and validation results accurately. Never apply a migration during review.

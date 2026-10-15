@@ -121,8 +121,6 @@ This project actively addresses common security risks:
 
 ## 🚧 Future Improvements (Optional)
 
-* Role & Permission management
-* Audit logging
 * Device-based session tracking
 * OAuth / Social login integration
 

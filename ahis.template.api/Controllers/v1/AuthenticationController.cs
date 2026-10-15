@@ -1,12 +1,13 @@
 ﻿using ahis.template.application.Features.AccountFeatures.Commands;
 using ahis.template.application.Features.AuthenticationFeatures.Commands;
-using ahis.template.application.Features.AuthenticationFeatures.Queries;
+using ahis.template.api.Security;
 using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
 using ahis.template.domain.Models.ViewModels.AuthenticationVM;
 using ahis.template.identity.Interfaces;
 using FluentResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.RateLimiting;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
@@ -22,6 +23,46 @@ namespace ahis.template.api.Controllers.v1
         public AuthenticationController(IMediator mediator)
         {
             _mediator = mediator;
+        }
+
+        [HttpPost("passkeys/options")]
+        [AllowAnonymous]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> PasskeyOptions(CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(new PasskeyAuthenticationOptionsCommand(), cancellationToken);
+            return result.IsSuccess ? Ok(result.Value) : ToValidationProblem(result);
+        }
+
+        [HttpPost("passkeys/complete")]
+        [AllowAnonymous]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> CompletePasskey([FromBody] CompletePasskeyAuthenticationCommand command, CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(command, cancellationToken);
+            if (result.IsFailed) return ToValidationProblem(result);
+            RefreshCookie.Append(Response, result.Value.RefreshToken!, result.Value.RefreshTokenExpiresAt);
+            return Ok(new ahis.template.domain.Models.ViewModels.AuthenticationVM.LoginResponseVM
+            {
+                AccessToken = result.Value.AccessToken,
+                ExpiresInSeconds = result.Value.ExpiresInSeconds,
+                RequiresTwoFactor = result.Value.RequiresTwoFactor,
+                IsEmailConfirmed = result.Value.IsEmailConfirmed
+            });
+        }
+
+        private IActionResult ToValidationProblem(Result result)
+        {
+            foreach (var error in result.Errors) ModelState.AddModelError("general", error.Message);
+            return ValidationProblem(ModelState);
+        }
+
+        private IActionResult ToValidationProblem<T>(Result<T> result)
+        {
+            foreach (var error in result.Errors) ModelState.AddModelError("general", error.Message);
+            return ValidationProblem(ModelState);
         }
 
 
@@ -79,38 +120,6 @@ namespace ahis.template.api.Controllers.v1
         /// <response code="400">
         /// Returned when the request payload is invalid.
         /// </response>
-        [HttpPost("check-account")]
-        [ProducesResponseType(typeof(ResponseDto<CheckAccountStateVM>), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-        [EnableRateLimiting("AuthPolicy")]
-        public async Task<IActionResult> CheckAccount([FromBody] CheckAccountStateByUsernameOrEmailQuery query)
-        {
-            var result = await _mediator.Send(query);
-
-            if (result.IsFailed)
-            {
-                var modelState = new ModelStateDictionary();
-
-
-                foreach (var error in result.Errors)
-                {
-                    if (error.Metadata.TryGetValue("Field", out var field))
-                    {
-                        modelState.AddModelError(field.ToString()!, error.Message);
-                    }
-                    else
-                    {
-                        modelState.AddModelError("general", error.Message);
-                    }
-                }
-
-                return ValidationProblem(modelState);
-            }
-
-            return ToActionResult(result);
-        }
-
         /// <summary>
         /// Authenticate a user using username/email and password
         /// </summary>
@@ -123,6 +132,7 @@ namespace ahis.template.api.Controllers.v1
         /// 3. If **Two-Factor Authentication (2FA) is enabled**:
         ///    - No access or refresh tokens are issued
         ///    - Response indicates `requiresTwoFactor = true`
+        ///    - A five-minute HttpOnly challenge cookie is issued and must be retained for verification
         ///    - Frontend must call **Verify 2FA** endpoint
         /// 4. If authentication is fully successful:
         ///    - An **access token** is returned in the response body
@@ -131,7 +141,7 @@ namespace ahis.template.api.Controllers.v1
         /// ## Refresh Token Behavior
         /// - Stored as an **HttpOnly** cookie (not accessible via JavaScript)
         /// - Automatically sent by the browser on refresh requests
-        /// - Scoped to `/api/authentication/refresh`
+        /// - Scoped to `/api`
         ///
         /// ## Notes for Frontend Developers
         /// - If `requiresTwoFactor` is true:
@@ -154,7 +164,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [Produces("application/json")]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         public async Task<IActionResult> Login(LoginCommand command)
         {
 
@@ -183,18 +193,7 @@ namespace ahis.template.api.Controllers.v1
             // Set refresh token as HttpOnly cookie
             if (!result.Value.RequiresTwoFactor)
             {
-                HttpContext.Response.Cookies.Append(
-                    "refresh_token",
-                    result.Value.RefreshToken!,
-                    new CookieOptions
-                    {
-                        HttpOnly = true,
-                        Secure = true,
-                        SameSite = SameSiteMode.Lax,
-                        Expires = result.Value.RefreshTokenExpiresAt,
-                        Path = "/"
-                    }
-                );
+                RefreshCookie.Append(HttpContext.Response, result.Value.RefreshToken!, result.Value.RefreshTokenExpiresAt);
             }
 
             LoginResponseVM loginResponse = new LoginResponseVM
@@ -220,6 +219,7 @@ namespace ahis.template.api.Controllers.v1
         ///
         /// Flow:
         /// 1. Frontend submits the 2FA verification code (e.g., from Authenticator app).
+        ///    The short-lived challenge cookie issued by login identifies the pending sign-in.
         /// 2. Backend validates the code against the selected 2FA provider.
         /// 3. If valid:
         ///    - An access token is returned in the response body.
@@ -240,7 +240,6 @@ namespace ahis.template.api.Controllers.v1
         /// </remarks>
         /// <param name="command">
         /// 2FA verification payload containing:
-        /// - User identifier
         /// - 2FA provider (e.g., Authenticator)
         /// - One-time verification code
         /// </param>
@@ -254,6 +253,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status423Locked)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         [Produces("application/json")]
+        [EnableRateLimiting("AnonymousAuthPolicy")]
         public async Task<IActionResult> VerifyTwoFactor([FromBody] VerifyTwoFactorLoginCommand command)
         {
             var result = await _mediator.Send(command);
@@ -278,17 +278,7 @@ namespace ahis.template.api.Controllers.v1
                 return ValidationProblem(modelState);
             }
 
-            HttpContext.Response.Cookies.Append(
-                "refresh_token",
-                result.Value.RefreshToken,
-                new CookieOptions
-                {
-                    HttpOnly = true,
-                    Secure = true,
-                    SameSite = SameSiteMode.Strict,
-                    Expires = result.Value.RefreshTokenExpiresAt,
-                    Path = "/api/authentication/refresh"
-                });
+            RefreshCookie.Append(HttpContext.Response, result.Value.RefreshToken, result.Value.RefreshTokenExpiresAt);
 
             LoginResponseVM loginResponse = new LoginResponseVM
             {
@@ -303,24 +293,14 @@ namespace ahis.template.api.Controllers.v1
 
         [HttpPost("logout")]
         [ProducesResponseType(StatusCodes.Status200OK)]
+        [EnableRateLimiting("RefreshPolicy")]
         public async Task<IActionResult> Logout()
         {
             Request.Cookies.TryGetValue("refresh_token", out var refreshToken);
 
             await _mediator.Send(new LogoutCommand(refreshToken));
 
-            // Clear cookie
-            HttpContext.Response.Cookies.Append(
-                "refresh_token",
-                string.Empty,
-                new CookieOptions
-                {
-                    HttpOnly = true,
-                    Secure = true,
-                    SameSite = SameSiteMode.Strict,
-                    Expires = DateTime.UtcNow.AddDays(-1),
-                    Path = "/api/authentication/refresh"
-                });
+            RefreshCookie.Clear(HttpContext.Response);
 
             return Ok(new { message = "Successfully logged out." });
         }
@@ -337,6 +317,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        [EnableRateLimiting("RecoveryPolicy")]
         public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordCommand command)
         {
             var result = await _mediator.Send(command);
@@ -395,6 +376,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        [EnableRateLimiting("RecoveryPolicy")]
         public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordCommand command)
         {
             var result = await _mediator.Send(command);
@@ -454,7 +436,7 @@ namespace ahis.template.api.Controllers.v1
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        [EnableRateLimiting("AuthPolicy")]
+        [EnableRateLimiting("RefreshPolicy")]
         public async Task<IActionResult> RefreshToken()
         {
             var refreshToken = HttpContext.Request.Cookies["refresh_token"];
@@ -492,18 +474,7 @@ namespace ahis.template.api.Controllers.v1
             }
 
 
-            HttpContext.Response.Cookies.Append(
-                "refresh_token",
-                result.Value.RefreshToken!,
-                new CookieOptions
-                {
-                    HttpOnly = true,
-                    Secure = true,
-                    SameSite = SameSiteMode.Lax,
-                    Expires = result.Value.RefreshTokenExpiresAt,
-                    Path = "/"
-                }
-            );
+            RefreshCookie.Append(HttpContext.Response, result.Value.RefreshToken!, result.Value.RefreshTokenExpiresAt);
 
             LoginResponseVM loginResponse = new LoginResponseVM
             {
@@ -517,18 +488,5 @@ namespace ahis.template.api.Controllers.v1
         }
 
 
-        [HttpPost("decode-token")]
-        public async Task<IActionResult> DecodeToken([FromBody] string token)
-        {
-            var result = await _mediator.Send(new DecodeTokenQuery(token));
-            return ToActionResult(result);
-        }
-
-        [HttpPost("encode-token")]
-        public async Task<IActionResult> EncodeToken([FromBody] EncodeTokenQuery query)
-        {
-            var result = await _mediator.Send(query);
-            return ToActionResult(result);
-        }
     }
 }

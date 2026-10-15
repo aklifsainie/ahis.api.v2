@@ -1,14 +1,21 @@
 using ahis.template.api.ApiClientAuthentication;
 using ahis.template.api.Filters;
+using ahis.template.api.Services;
 using ahis.template.application.Interfaces.Services;
 using ahis.template.application.Services;
+using ahis.template.domain.Security;
 using ahis.template.identity;
 using ahis.template.identity.Contexts;
+using ahis.template.identity.Services;
 using ahis.template.identity.Models.Entities;
+using ahis.template.identity.Interfaces;
+using ahis.template.identity.Security;
 using ahis.template.infrastructure;
 using ahis.template.infrastructure.Contexts;
 using ahis.template.infrastructure.SharedKernel;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.AspNetCore.RateLimiting;
@@ -24,7 +31,7 @@ namespace ahis.template.api
 {
     public class Program
     {
-        public static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
 
@@ -35,12 +42,17 @@ namespace ahis.template.api
             builder.Services.AddScoped<IEmailSender, EmailSender>();
             builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
             builder.Services.AddScoped<UnitOfWork>();
+            builder.Services.AddHttpContextAccessor();
+            builder.Services.AddSingleton(TimeProvider.System);
+            builder.Services.AddHostedService<IdentitySessionCleanupHostedService>();
 
 
             // Add assemblies service extentions
             builder.Services.AddInfrastructure();
             builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseSqlServer(connectionString));
             builder.Services.AddIdentityServices(connectionString);
+            builder.Services.Configure<IdentityRoleBootstrapOptions>(
+                builder.Configuration.GetSection(IdentityRoleBootstrapOptions.SectionName));
             builder.Services.AddControllers();
             builder.Services.AddEndpointsApiExplorer();
             ConfigureSwagger(builder.Services, builder.Configuration);
@@ -69,35 +81,114 @@ namespace ahis.template.api
                     "CountryReadPolicy",
                     policy =>
                     {
-                        policy.AddAuthenticationSchemes(
-                            ApiKeyAuthenticationDefault
-                                .AuthenticationScheme);
-
+                        policy.AddAuthenticationSchemes("CountryAuthentication");
                         policy.RequireAuthenticatedUser();
-
-                        policy.RequireClaim(
-                            ApiKeyClaimType.Permission,
-                            "country.read");
+                        policy.RequireAssertion(context =>
+                            context.User.IsInRole(IdentityRoleNames.User) ||
+                            context.User.IsInRole(IdentityRoleNames.Superadmin) ||
+                            context.User.HasClaim(HumanPermissionCatalog.ClaimType, HumanPermissionCatalog.CountryRead) ||
+                            (context.User.HasClaim(ApiKeyClaimType.AuthenticationType, "api_key") &&
+                             context.User.HasClaim(ApiKeyClaimType.Permission, "country.read")));
                     });
 
                 options.AddPolicy(
                     "CountryWritePolicy",
                     policy =>
                     {
-                        policy.AddAuthenticationSchemes(
-                            ApiKeyAuthenticationDefault
-                                .AuthenticationScheme);
-
+                        policy.AddAuthenticationSchemes("CountryAuthentication");
                         policy.RequireAuthenticatedUser();
+                        policy.RequireAssertion(context =>
+                            context.User.IsInRole(IdentityRoleNames.Superadmin) ||
+                            context.User.HasClaim(HumanPermissionCatalog.ClaimType, HumanPermissionCatalog.CountryWrite) ||
+                            (context.User.HasClaim(ApiKeyClaimType.AuthenticationType, "api_key") &&
+                             context.User.HasClaim(ApiKeyClaimType.Permission, "country.write")));
+                    });
 
-                        policy.RequireClaim(
-                            ApiKeyClaimType.Permission,
-                            "country.write");
+                options.AddPolicy("ApiClientAdminPolicy", policy =>
+                {
+                    policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireRole(IdentityRoleNames.Superadmin);
+                });
+
+                options.AddPolicy("AuditReadPolicy", policy =>
+                {
+                    policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireRole(IdentityRoleNames.Superadmin);
+                });
+
+                options.AddPolicy(
+                    "IdentityAdminSecurityReadPolicy",
+                    policy =>
+                    {
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
+                    "IdentityAdminSessionRevocationPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
+                    "IdentityAdminUserUnlockPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
+                    "IdentityAdminUserAccessPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
+                    "IdentityRoleReadPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
+                    "IdentityRoleManagementPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
+                    "IdentityRoleAssignmentPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
                     });
 
             });
 
             var app = builder.Build();
+
+            await using (var scope = app.Services.CreateAsyncScope())
+            {
+                var bootstrap = scope.ServiceProvider.GetRequiredService<IIdentityRoleBootstrapService>();
+                await bootstrap.InitializeAsync();
+            }
 
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())
@@ -107,6 +198,21 @@ namespace ahis.template.api
             }
 
             app.UseHttpsRedirection();
+
+            app.Use(async (context, next) =>
+            {
+                if (context.Request.Path.StartsWithSegments("/api/apiclient") ||
+                    context.Request.Path.StartsWithSegments("/api/auditlog"))
+                {
+                    context.Response.OnStarting(() =>
+                    {
+                        context.Response.Headers.CacheControl = "no-store";
+                        return Task.CompletedTask;
+                    });
+                }
+
+                await next();
+            });
 
             // IMPORTANT: apply CORS before authorization and endpoint mapping
             app.UseCors("DefaultCorsPolicy");
@@ -210,22 +316,89 @@ namespace ahis.template.api
         {
             services.AddRateLimiter(options =>
             {
-                // Strict: login endpoint
-                options.AddFixedWindowLimiter("AuthPolicy", limiter =>
+                options.AddPolicy("AnonymousAuthPolicy", context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 5,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        }));
+
+                options.AddPolicy("AuthenticatedSecurityPolicy", context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                            ?? context.Connection.RemoteIpAddress?.ToString()
+                            ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 5,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        }));
+
+                options.AddPolicy("RecoveryPolicy", context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 5,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                    }));
+
+                options.AddPolicy("PasskeyPolicy", context =>
                 {
-                    limiter.PermitLimit = 5; // 5 requests
-                    limiter.Window = TimeSpan.FromMinutes(1);
-                    limiter.QueueLimit = 0; // no queue for login
+                    var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+                    return RateLimitPartition.GetFixedWindowLimiter(
+                        "passkey:" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown") + ":" +
+                        (string.IsNullOrWhiteSpace(userId) ? "anonymous" : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(userId)))),
+                        _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true });
                 });
 
-                // Normal API endpoint
-                options.AddSlidingWindowLimiter("ApiPolicy", limiter =>
+                options.AddPolicy("RefreshPolicy", context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = 10,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        }));
+
+                options.AddPolicy("CountryTrafficPolicy", context =>
                 {
-                    limiter.PermitLimit = 10; // 100 requests
-                    limiter.Window = TimeSpan.FromMinutes(1);
-                    limiter.SegmentsPerWindow = 4; // Sliding window segments
-                    limiter.QueueLimit = 2; // small queue for extra requests
-                    limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+                    var client = context.Features.Get<ApiClientRequestContext>();
+                    if (client is not null)
+                    {
+                        return RateLimitPartition.GetSlidingWindowLimiter(
+                            $"api-client:{client.ClientDatabaseId}:{client.RateLimitPerMinute}",
+                            _ => new SlidingWindowRateLimiterOptions
+                            {
+                                PermitLimit = client.RateLimitPerMinute,
+                                Window = TimeSpan.FromMinutes(1),
+                                SegmentsPerWindow = 4,
+                                QueueLimit = 0,
+                                AutoReplenishment = true
+                            });
+                    }
+
+                    var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+                    return RateLimitPartition.GetSlidingWindowLimiter(
+                        $"human-country:{userId}",
+                        _ => new SlidingWindowRateLimiterOptions
+                        {
+                            PermitLimit = 10,
+                            Window = TimeSpan.FromMinutes(1),
+                            SegmentsPerWindow = 4,
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        });
                 });
 
                 options.OnRejected = async (context, token) =>
@@ -275,34 +448,28 @@ namespace ahis.template.api
                         return Task.CompletedTask;
                     },
                     OnTokenValidated = async context => {
-
-                        var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
-
+                        var tokenState = context.HttpContext.RequestServices.GetRequiredService<IIdentityTokenStateService>();
                         var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                        if (string.IsNullOrWhiteSpace(userId))
-                        {
-                            context.Fail("Invalid token: missing user id");
-                            return;
-                        }
-
-                        var user = await userManager.FindByIdAsync(userId);
-
-                        // CRITICAL CHECK
-                        if (user == null)
-                        {
-                            context.Fail("User no longer exists");
-                            return;
-                        }
-
-                        // Optional hardening
-                        if (user.LockoutEnabled && user.LockoutEnd > DateTimeOffset.UtcNow)
-                        {
-                            context.Fail("User is locked out");
-                            return;
-                        }
+                        var version = context.Principal?.FindFirstValue(IIdentityTokenStateService.SecurityVersionClaim);
+                        var tokenUse = context.Principal?.FindFirstValue(IIdentityTokenStateService.TokenUseClaim);
+                        var sessionId = Guid.TryParse(context.Principal?.FindFirstValue("session_id"), out var parsedSessionId)
+                            ? parsedSessionId
+                            : (Guid?)null;
+                        if (tokenUse != IIdentityTokenStateService.AccessTokenUse ||
+                            !await tokenState.ValidateAsync(userId, version, context.HttpContext.RequestAborted) ||
+                            !await tokenState.ValidateSessionAsync(userId, sessionId, context.HttpContext.RequestAborted))
+                            context.Fail("Invalid bearer token");
                     }
                 };
+            })
+            .AddPolicyScheme("CountryAuthentication", "Country bearer or API key", options =>
+            {
+                options.ForwardDefaultSelector = context =>
+                    context.Request.Headers.ContainsKey("Authorization")
+                        ? JwtBearerDefaults.AuthenticationScheme
+                        : context.Request.Headers.ContainsKey(ApiKeyAuthenticationDefault.HeaderName)
+                            ? ApiKeyAuthenticationDefault.AuthenticationScheme
+                            : JwtBearerDefaults.AuthenticationScheme;
             })
             .AddScheme<ApiKeyAuthenticationOption, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationDefault.AuthenticationScheme, _ => { })
             .AddIdentityCookies();
@@ -341,13 +508,39 @@ namespace ahis.template.api
                 .AddRoles<IdentityRole>()
                 .AddEntityFrameworkStores<IdentityContext>()
                 .AddSignInManager()
-                .AddDefaultTokenProviders();
+                .AddDefaultTokenProviders()
+                .AddTokenProvider<InitialPasswordSetupTokenProvider>(InitialPasswordSetupTokenProvider.ProviderName);
+
+            services.Configure<InitialPasswordSetupTokenProviderOptions>(options =>
+            {
+                options.TokenLifespan = TimeSpan.FromMinutes(30);
+            });
+
+            services.Configure<CookieAuthenticationOptions>(IdentityConstants.TwoFactorUserIdScheme, options =>
+            {
+                options.ExpireTimeSpan = TimeSpan.FromMinutes(5);
+                options.SlidingExpiration = false;
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                options.Cookie.SameSite = SameSiteMode.Lax;
+                options.Cookie.Path = "/api";
+                options.Events.OnSigningIn = context =>
+                {
+                    // Clear challenges issued before the path was widened. Without this,
+                    // a browser can send the old, more-specific cookie before the new one.
+                    context.Response.Cookies.Delete(context.Options.Cookie.Name!, new CookieOptions
+                    {
+                        HttpOnly = true,
+                        Secure = true,
+                        SameSite = SameSiteMode.Lax,
+                        Path = "/api/authentication"
+                    });
+                    return Task.CompletedTask;
+                };
+            });
 
             services.ConfigureApplicationCookie(options => { options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; }; });
         }
 
-    } 
-
+    }
 }
-
-            

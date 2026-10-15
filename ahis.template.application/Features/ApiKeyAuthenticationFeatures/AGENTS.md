@@ -6,4 +6,4 @@ Its administration endpoints are a local variation: controllers call `IApiClient
 
 Before changing it, inspect the affected controller/service/validator, API-key entities and EF configurations, authentication handler, relevant policies in `Program.cs`, and [the module guide](../../../docs/modules/api-client-authentication.md).
 
-Never persist or log a raw API key; return it only from its creation response. API-client administration currently lacks explicit authorization and mutation auditing, while the stored per-client rate limit is not enforced. Treat those as security/behavior risks requiring a blueprinted change, not as conventions.
+Never persist or log a raw API key; return it only from its creation response. API-client administration requires a bearer-authenticated Superadmin and an actor-bound step-up proof; its mutations write redacted transactional audits. The per-client rate limit applies per application instance and is not a distributed quota.

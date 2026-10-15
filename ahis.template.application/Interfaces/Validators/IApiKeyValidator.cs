@@ -11,6 +11,6 @@ namespace ahis.template.application.Interfaces.Validators
     {
         Task<ApiKeyValidationResult> ValidateAsync(string rawApiKey, CancellationToken cancellationToken = default);
 
-        Task UpdateLastUsedAsync(Guid apiClientKeyId, CancellationToken cancellationToken = default);
+        Task UpdateLastUsedAsync(Guid apiClientKeyId, DateTime? observedLastUsedAt, CancellationToken cancellationToken = default);
     }
 }

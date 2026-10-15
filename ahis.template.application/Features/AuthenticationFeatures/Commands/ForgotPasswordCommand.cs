@@ -31,7 +31,7 @@ namespace ahis.template.application.Features.AuthenticationFeatures.Commands
 
         public async Task<Result> Handle(ForgotPasswordCommand request, CancellationToken cancellationToken)
         {
-            var result = await _authenticationService.ForgotPasswordAsync(request.Email, request.CallbackBaseUrl);
+            var result = await _authenticationService.StartAccountRecoveryAsync(request.Email, cancellationToken);
 
             if (!result.IsSuccess)
                 return Result.Fail(result.Errors.FirstOrDefault()?.Message ?? "Registration failed.");

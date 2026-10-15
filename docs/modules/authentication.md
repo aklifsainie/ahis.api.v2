@@ -2,16 +2,18 @@
 
 ## Ownership and flow
 
-Authentication owns account-state checks, password login, 2FA completion, JWT issuance, refresh rotation, logout, password reset, and diagnostics. The controller dispatches through the custom mediator; handlers delegate multi-step work to `IAuthenticationService`, Identity managers, `IdentityContext`, and SMTP.
+Authentication owns password login, 2FA completion, JWT issuance, refresh rotation, logout, and password reset. The controller dispatches through the custom mediator; handlers delegate multi-step work to `IAuthenticationService`, Identity managers, `IdentityContext`, and SMTP.
 
 ## Observed behavior
 
-- Password login rejects inactive/deleted users and uses `lockoutOnFailure`; the observed development configuration is three attempts and five minutes.
-- Successful refresh rotates the token. Revoked-token reuse bulk-revokes active tokens; logout is non-failing for unusable supplied tokens.
-- Password reset updates the Identity security stamp. Account-state checking gives an unknown account a generic negative state.
+- Password login rejects inactive/deleted users and uses `lockoutOnFailure`; the observed development configuration is three attempts and five minutes. A two-factor-required login creates a five-minute protected challenge bound to the user's current security version; it is an `HttpOnly`, `Secure`, `SameSite=Lax` cookie scoped to `/api`, and completion derives the user only from that challenge.
+- Successful refresh rotates a hash-addressed token in its random-public-ID session and records a parent relationship. It requires the session to remain active before it stores the replacement token. Revoked-token reuse bulk-revokes active tokens and sessions; logout revokes the current session and is non-failing for unusable supplied tokens.
+- Password reset updates the Identity security stamp. Forgot-password and confirmation-resend responses return the same success result for every syntactically valid email.
+- The legacy `forgot-password` and `reset-password` routes are one-release aliases for the account recovery flow. Recovery links use the configured public client origin, expire after 15 minutes, and are single-use. Start requests are throttled per IP and hashed account identifier; completion requires MFA evidence when MFA is enabled.
+- Bearer validation, refresh rotation, two-factor completion, and step-up proof validation now also consult Identity restriction provenance. An active Administrative/Security Hold or `LegacyUnclassified` row denies access regardless of `LockoutEnd`; unavailable or mismatched provenance denies access. Password-failure lockouts write an `OrdinaryLockout` provenance row in the Identity transaction. No hold-management route is included.
 
 ## Risks and exceptions
 
-JWT validation checks user existence and lockout but not active/deleted state or security stamps; refresh similarly omits those checks. The 2FA completion handler requires current-user context although password login returns no token when 2FA is required. Refresh-cookie paths vary among actions. Forgot-password and resend-confirmation behavior conflicts with some enumeration-resistance comments. Transactional early returns in refresh/2FA require review.
+The `refresh_token` cookie is `Secure`, `HttpOnly`, `SameSite=Lax`, and scoped to `/api`; logout and security invalidation clear legacy paths during transition. Anonymous authentication and recovery actions use per-IP fixed-window limits; authenticated account-security actions use per-user fixed-window limits. The in-process limiter remains instance-local, so multi-instance deployments need a shared edge or distributed limit for account-wide abuse control. The security-version and recovery-code removal migrations require approved deployment application.
 
 Treat these as observed risks, not requirements. See the local `AGENTS.md` and [security guidance](../architecture/authentication-authorization.md).

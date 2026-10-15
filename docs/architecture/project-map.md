@@ -7,12 +7,12 @@
 | `ahis.template.domain` | Class library | Shared entities, ViewModels, enums, base models, unit-of-work contract | None | Domain models |
 | `ahis.template.infrastructure` | Class library | Application EF context/configurations/migrations, repositories, API-key and audit implementations | Application, Domain | SQL Server persistence |
 | `ahis.template.identity` | Class library | Identity entities, account/authentication services, Identity context and migrations | Domain | Identity persistence |
-| `ahis.template.test` | Test project | Handler-level unit tests | Application, Domain | xUnit tests |
+| `ahis.template.test` | Test project | Handler, Identity-service, authorization-policy, concurrency, and API-host tests | API, Application, Domain, Identity | xUnit/Moq/LocalDB tests |
 
 ## Package observations
 
 - Every project targets `net8.0` with nullable reference types enabled.
-- API and Infrastructure reference EF Core 9.0.7; Identity references EF Core 8.0.22.
+- API, Infrastructure, and Identity reference EF Core 8.0.22.
 - Application references FluentResults 4.0.0; Identity references FluentResults 3.11.0.
 - No central package management, `global.json`, `Directory.Build.*`, Docker files, worker projects, or CI workflow were found at bootstrap time.
 

@@ -29,6 +29,10 @@ namespace ahis.template.application.Services
 
         public string? UserRole => User?.FindFirstValue(ClaimTypes.Role) ?? User?.FindFirstValue("role");
 
+        public Guid? SessionId => Guid.TryParse(User?.FindFirstValue("session_id"), out var sessionId)
+            ? sessionId
+            : null;
+
         public string? IpAddress
         {
             get

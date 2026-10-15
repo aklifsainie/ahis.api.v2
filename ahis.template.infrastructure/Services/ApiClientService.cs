@@ -4,6 +4,8 @@ using ahis.template.domain.Models.Entities.ApiKey;
 using ahis.template.domain.Models.ViewModels.ApiKeyAuthenticationVM;
 using ahis.template.infrastructure.ApiClientAuthentication;
 using ahis.template.infrastructure.Contexts;
+using ahis.template.domain.Enums;
+using ahis.template.domain.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
@@ -16,14 +18,17 @@ namespace ahis.template.infrastructure.Services
     public class ApiClientService : IApiClientService
     {
         private readonly ApplicationDbContext _dbContext;
+        private readonly ICurrentUserService _currentUser;
 
-        public ApiClientService(ApplicationDbContext dbContext)
+        public ApiClientService(ApplicationDbContext dbContext, ICurrentUserService currentUser)
         {
             _dbContext = dbContext;
+            _currentUser = currentUser;
         }
 
-        public async Task<CreateApiClientResponseVM> CreateClientAsync(CreateApiClientCommand command, string? createdBy, CancellationToken cancellationToken = default)
+        public async Task<CreateApiClientResponseVM> CreateClientAsync(CreateApiClientCommand command, string createdBy, CancellationToken cancellationToken = default)
         {
+            RequireActor(createdBy);
             var normalizedClientId = NormalizeClientId(command.ClientId);
 
             var clientExists = await _dbContext.ApiClients.AnyAsync(x => x.ClientId == normalizedClientId, cancellationToken);
@@ -37,6 +42,9 @@ namespace ahis.template.infrastructure.Services
             {
                 throw new ArgumentException("The key expiry date must be in the future.", nameof(command.KeyExpiresAt));
             }
+
+            if (command.RateLimitPerMinute is < 1 or > 10000)
+                throw new ArgumentException("The API client rate limit must be between 1 and 10000.", nameof(command.RateLimitPerMinute));
 
             var generatedKey = ApiKeyGenerator.Generate();
             var utcNow = DateTime.UtcNow;
@@ -90,6 +98,8 @@ namespace ahis.template.infrastructure.Services
             }
 
             _dbContext.ApiClients.Add(apiClient);
+            AddAudit(AuditActionEnum.Create, "ApiClient", apiClient.Id, createdBy, "client-created");
+            AddAudit(AuditActionEnum.Create, "ApiClientKey", apiClientKey.Id, createdBy, "initial-key-created");
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -112,8 +122,9 @@ namespace ahis.template.infrastructure.Services
             };
         }
 
-        public async Task<CreateApiClientKeyResponseVM> CreateKeyAsync(Guid apiClientId, CreateApiClientKeyCommand command, string? createdBy, CancellationToken cancellationToken = default)
+        public async Task<CreateApiClientKeyResponseVM> CreateKeyAsync(Guid apiClientId, CreateApiClientKeyCommand command, string createdBy, CancellationToken cancellationToken = default)
         {
+            RequireActor(createdBy);
             var apiClient = await _dbContext.ApiClients.FirstOrDefaultAsync(x => x.Id == apiClientId, cancellationToken) ?? throw new KeyNotFoundException("API client was not found.");
 
             if (!apiClient.IsActive)
@@ -141,6 +152,7 @@ namespace ahis.template.infrastructure.Services
             };
 
             _dbContext.ApiClientKey.Add(apiClientKey);
+            AddAudit(AuditActionEnum.Create, "ApiClientKey", apiClientKey.Id, createdBy, "key-created");
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -155,8 +167,9 @@ namespace ahis.template.infrastructure.Services
             };
         }
 
-        public async Task RevokeKeyAsync(Guid apiClientId, Guid keyId, string reason, string? revokedBy, CancellationToken cancellationToken = default)
+        public async Task RevokeKeyAsync(Guid apiClientId, Guid keyId, string reason, string revokedBy, CancellationToken cancellationToken = default)
         {
+            RequireActor(revokedBy);
             var apiClientKey = await _dbContext.ApiClientKey.FirstOrDefaultAsync(x => x.Id == keyId && x.ApiClientId == apiClientId, cancellationToken) ?? throw new KeyNotFoundException("API client key was not found.");
 
             if (!apiClientKey.IsActive || apiClientKey.RevokedAt.HasValue)
@@ -168,12 +181,14 @@ namespace ahis.template.infrastructure.Services
             apiClientKey.RevokedAt = DateTime.UtcNow;
             apiClientKey.RevokedBy = revokedBy;
             apiClientKey.RevocationReason = reason.Trim();
+            AddAudit(AuditActionEnum.StatusChange, "ApiClientKey", apiClientKey.Id, revokedBy, "key-revoked");
 
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        public async Task DeactivateClientAsync(Guid apiClientId, string reason, string? deactivatedBy, CancellationToken cancellationToken = default)
+        public async Task DeactivateClientAsync(Guid apiClientId, string reason, string deactivatedBy, CancellationToken cancellationToken = default)
         {
+            RequireActor(deactivatedBy);
             var apiClient = await _dbContext.ApiClients.Include(x => x.Keys).FirstOrDefaultAsync(x => x.Id == apiClientId, cancellationToken) ?? throw new KeyNotFoundException("API client was not found.");
 
             var utcNow = DateTime.UtcNow;
@@ -187,13 +202,18 @@ namespace ahis.template.infrastructure.Services
             /*
              * Deactivate all keys belonging to the client.
              */
+            var revokedKeyCount = 0;
             foreach (var key in apiClient.Keys.Where(x => x.IsActive))
             {
                 key.IsActive = false;
                 key.RevokedAt = utcNow;
                 key.RevokedBy = deactivatedBy;
                 key.RevocationReason = "API client was deactivated.";
+                revokedKeyCount++;
             }
+
+            AddAudit(AuditActionEnum.StatusChange, "ApiClient", apiClient.Id, deactivatedBy,
+                $"client-deactivated;revoked-key-count={revokedKeyCount}");
 
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
@@ -206,6 +226,27 @@ namespace ahis.template.infrastructure.Services
             }
 
             return clientId.Trim().ToLowerInvariant().Replace(' ', '-');
+        }
+
+        private void AddAudit(AuditActionEnum action, string entityName, Guid entityId, string actorUserId, string operation)
+        {
+            _dbContext.AuditLog.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                UserId = actorUserId,
+                EntityName = entityName,
+                EntityId = entityId.ToString(),
+                Action = action,
+                TimestampUtc = DateTime.UtcNow,
+                Metadata = operation,
+                CorrelationId = _currentUser.CorrelationId
+            });
+        }
+
+        private static void RequireActor(string actorUserId)
+        {
+            if (string.IsNullOrWhiteSpace(actorUserId))
+                throw new InvalidOperationException("An authenticated administrator is required.");
         }
     }
 }

@@ -6,4 +6,4 @@ Use the custom mediator with `ICountryRepository` and `IUnitOfWork` for simple C
 
 Before changing Country, inspect the closest controller action, command/query and validator, `ICountryRepository`, generic repository, configuration, `BaseEntity`, audit interceptor, and [the module guide](../../../docs/modules/country.md).
 
-Observed risks: Country permission policies are configured but not applied; unfiltered unique indexes keep soft-deleted values reserved while handler pre-checks exclude them; logical delete is audited as an EF update; explicit read-audit persistence is best-effort. Preserve these distinctions in any plan.
+Country policies distinguish bearer roles from API-key permissions. Bearer takes precedence when both credential headers are supplied. Unfiltered unique indexes keep soft-deleted values reserved while handler pre-checks exclude them; logical delete is audited as an EF update; explicit read-audit persistence is best-effort. Preserve these distinctions in any plan.

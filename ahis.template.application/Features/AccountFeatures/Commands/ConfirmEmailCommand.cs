@@ -29,7 +29,7 @@ namespace ahis.template.application.Features.AccountFeatures.Commands
         public async Task<Result> Handle(ConfirmEmailCommand request, CancellationToken cancellationToken)
         {
             _logger.LogInformation("Confirming email for user {UserId}", request.UserId);
-            var result = await _accountService.ConfirmEmailAsync(request.UserId, request.Token);
+            var result = await _accountService.ConfirmEmailAsync(request.UserId, request.Token, cancellationToken);
             if (!result.IsSuccess)
             {
                 _logger.LogWarning($"Failed to register user {request.UserId}: {result.Errors.FirstOrDefault()?.Message}");

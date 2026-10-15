@@ -8,6 +8,11 @@ using FluentResults;
 using ahis.template.identity.Interfaces;
 using ahis.template.identity.Models.Entities;
 using ahis.template.identity.Models.DTOs;
+using ahis.template.identity.SharedKernel;
+using ahis.template.identity.Contexts;
+using Microsoft.EntityFrameworkCore;
+using ahis.template.domain.Security;
+using ahis.template.identity.Security;
 
 
 namespace ahis.template.identity.Services
@@ -21,20 +26,39 @@ namespace ahis.template.identity.Services
         private readonly IEmailSender _emailSender;
         private readonly IConfiguration _configuration;
         private readonly ILogger<AccountService> _logger;
+        private readonly IIdentityTokenStateService _tokenState;
+        private readonly IAccountSecurityProofService _securityProof;
+        private readonly IIdentityRestrictionService _restrictions;
+        private readonly IdentityUnitOfWork _unitOfWork;
+        private readonly IdentityContext _context;
+        private readonly IEffectiveSuperadminLock _effectiveSuperadminLock;
 
         public AccountService(
             UserManager<ApplicationUser> userManager,
             SignInManager<ApplicationUser> signInManager,
             IEmailSender emailSender,
             IConfiguration configuration,
-            ILogger<AccountService> logger)
+            ILogger<AccountService> logger,
+            IIdentityTokenStateService tokenState,
+            IAccountSecurityProofService securityProof,
+            IIdentityRestrictionService restrictions,
+            IdentityUnitOfWork unitOfWork,
+            IdentityContext context,
+            IEffectiveSuperadminLock effectiveSuperadminLock)
         {
             _userManager = userManager;
             _signInManager = signInManager;
             _emailSender = emailSender;
             _configuration = configuration;
             _logger = logger;
+            _tokenState = tokenState;
+            _securityProof = securityProof;
+            _restrictions = restrictions;
+            _unitOfWork = unitOfWork;
+            _context = context;
+            _effectiveSuperadminLock = effectiveSuperadminLock;
         }
+
 
         // 1. Register new user (no password yet)
         public async Task<Result<string>> RegisterAsync(string email, string userName, string callbackBaseUrl)
@@ -88,11 +112,18 @@ namespace ahis.template.identity.Services
         {
             try
             {
+                var configuredCallbackBaseUrl = _configuration["Identity:PublicClientBaseUrl"];
+                if (string.IsNullOrWhiteSpace(configuredCallbackBaseUrl))
+                {
+                    _logger.LogError("Confirmation email cannot be resent because Identity:PublicClientBaseUrl is not configured.");
+                    return Result.Ok();
+                }
+
                 var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
                 var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
 
                 // build callback url: e.g. {callbackBaseUrl}/api/account/confirm-email?userId={userId}&token={token}
-                var callbackUrl = BuildCallbackUrl(callbackBaseUrl, "account/confirm-email", new Dictionary<string, string>
+                var callbackUrl = BuildCallbackUrl(configuredCallbackBaseUrl, "account/confirm-email", new Dictionary<string, string>
                 {
                     ["userId"] = user.Id.ToString(),
                     ["token"] = encodedToken
@@ -115,7 +146,7 @@ namespace ahis.template.identity.Services
         }
 
         // 3. Confirm email
-        public async Task<Result> ConfirmEmailAsync(string userId, string encodedToken)
+        public async Task<Result> ConfirmEmailAsync(string userId, string encodedToken, CancellationToken cancellationToken)
         {
             try
             {
@@ -134,7 +165,13 @@ namespace ahis.template.identity.Services
                 }
 
                 user.EmailVerifiedAt = DateTime.UtcNow;
-                await _userManager.UpdateAsync(user);
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail("Unable to confirm email.");
+
+                var setupResult = await SendInitialPasswordSetupEmailAsync(user, cancellationToken);
+                if (!setupResult.IsSuccess)
+                    return Result.Fail("Email was confirmed, but the password setup email could not be sent.");
 
                 return Result.Ok();
             }
@@ -146,18 +183,31 @@ namespace ahis.template.identity.Services
         }
 
         // 4. Set password on first login (user has no password yet)
-        public async Task<Result> SetPasswordFirstTimeAsync(string userId, string password)
+        public async Task<Result> SetPasswordFirstTimeAsync(
+            string userId,
+            string token,
+            string password,
+            CancellationToken cancellationToken)
         {
             try
             {
                 var user = await _userManager.FindByIdAsync(userId);
-                if (user == null)
-                    return Result.Fail("User not found.");
+                if (!_tokenState.IsEligible(user) || user is null || !user.EmailConfirmed)
+                    return Result.Fail("Invalid or expired password setup link.");
+
+                var decodedToken = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(token));
+                var isValidToken = await _userManager.VerifyUserTokenAsync(
+                    user,
+                    InitialPasswordSetupTokenProvider.ProviderName,
+                    InitialPasswordSetupTokenProvider.Purpose,
+                    decodedToken);
+                if (!isValidToken)
+                    return Result.Fail("Invalid or expired password setup link.");
 
                 // If user already has password, prevent using this method
                 var hasPassword = await _userManager.HasPasswordAsync(user);
                 if (hasPassword)
-                    return Result.Fail("Password already set. Use change password flow.");
+                    return Result.Fail("Invalid or expired password setup link.");
 
                 var addPasswordResult = await _userManager.AddPasswordAsync(user, password);
                 if (!addPasswordResult.Succeeded)
@@ -168,6 +218,10 @@ namespace ahis.template.identity.Services
                 }
 
                 return Result.Ok();
+            }
+            catch (FormatException)
+            {
+                return Result.Fail("Invalid or expired password setup link.");
             }
             catch (Exception ex)
             {
@@ -223,11 +277,27 @@ namespace ahis.template.identity.Services
                 {
                     return Result.Fail<AuthenticatorSetupDto>("User not found.");
                 }
-                    
+
+                if (user.TwoFactorEnabled)
+                {
+                    return Result.Fail<AuthenticatorSetupDto>(
+                        "Two-factor authentication is already enabled. Use an approved authenticator reset flow.");
+                }
 
                 // Reset authenticator key (so QR code is generated fresh)
-                await _userManager.ResetAuthenticatorKeyAsync(user);
+                var resetResult = await _userManager.ResetAuthenticatorKeyAsync(user);
+                if (!resetResult.Succeeded)
+                {
+                    _logger.LogWarning("Failed to reset authenticator key for user {UserId}", userId);
+                    return Result.Fail<AuthenticatorSetupDto>("Failed to generate authenticator setup.");
+                }
+
                 var key = await _userManager.GetAuthenticatorKeyAsync(user);
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    _logger.LogWarning("Authenticator key was not available after reset for user {UserId}", userId);
+                    return Result.Fail<AuthenticatorSetupDto>("Failed to generate authenticator setup.");
+                }
 
                 // Build otpauth URI
                 var issuer = _configuration["Identity:Issuer"] ?? _configuration["AppSettings:AppName"] ?? "AHIS";
@@ -237,7 +307,12 @@ namespace ahis.template.identity.Services
                 // Save values (do not enable 2FA yet)
                 user.AuthenticatorKey = key;
                 user.AuthenticatorUri = uri;
-                await _userManager.UpdateAsync(user);
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                {
+                    _logger.LogWarning("Failed to save authenticator setup for user {UserId}", userId);
+                    return Result.Fail<AuthenticatorSetupDto>("Failed to generate authenticator setup.");
+                }
 
                 return Result.Ok(new AuthenticatorSetupDto { Key = key, ProvisionUri = uri });
             }
@@ -262,17 +337,28 @@ namespace ahis.template.identity.Services
                 if (!isValid)
                     return Result.Fail<IEnumerable<string>>("Invalid verification code.");
 
+                if (user.TwoFactorEnabled)
+                    return Result.Fail<IEnumerable<string>>("Two-factor authentication is already enabled.");
+
+                await _unitOfWork.BeginTransactionAsync();
+
                 // Enable two factor for user
-                await _userManager.SetTwoFactorEnabledAsync(user, true);
+                var enableResult = await _userManager.SetTwoFactorEnabledAsync(user, true);
+                if (!enableResult.Succeeded)
+                    return Result.Fail<IEnumerable<string>>("Failed to enable two-factor authentication.");
                 user.TwoFactorEnabledAt = DateTime.UtcNow;
 
                 // Generate recovery codes
                 var recovery = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
-                var codes = recovery.ToArray();
+                var codes = recovery?.ToArray() ?? Array.Empty<string>();
+                if (codes.Length != 10)
+                    return Result.Fail<IEnumerable<string>>("Failed to generate recovery codes.");
 
-                // Persist recovery codes securely (we store as JSON string here). In production consider encrypting.
-                user.RecoveryCodes = System.Text.Json.JsonSerializer.Serialize(codes);
-                await _userManager.UpdateAsync(user);
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail<IEnumerable<string>>("Failed to enable two-factor authentication.");
+
+                await _unitOfWork.CommitTransactionAsync();
 
                 return Result.Ok(codes.AsEnumerable());
             }
@@ -280,6 +366,10 @@ namespace ahis.template.identity.Services
             {
                 _logger.LogError(ex, "EnableAuthenticatorAsync error");
                 return Result.Fail<IEnumerable<string>>("Failed to enable authenticator.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
             }
         }
 
@@ -291,15 +381,22 @@ namespace ahis.template.identity.Services
                 if (user == null)
                     return Result.Fail("User not found.");
 
-                await _userManager.SetTwoFactorEnabledAsync(user, false);
+                var disableResult = await _userManager.SetTwoFactorEnabledAsync(user, false);
+                if (!disableResult.Succeeded)
+                    return Result.Fail("Failed to disable authenticator.");
+                var clearCodesResult = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 0);
+                if (clearCodesResult is null)
+                    return Result.Fail("Failed to disable authenticator.");
                 user.AuthenticatorKey = null;
                 user.AuthenticatorUri = null;
-                user.RecoveryCodes = null;
                 user.TwoFactorEnabledAt = null;
 
-                await _userManager.UpdateAsync(user);
+                var update = await _userManager.UpdateAsync(user);
+                if (!update.Succeeded)
+                    return Result.Fail("Failed to disable authenticator.");
 
-                return Result.Ok();
+                var invalidation = await _tokenState.InvalidateAsync(user);
+                return invalidation.Succeeded ? Result.Ok() : Result.Fail("Failed to invalidate sessions.");
             }
             catch (Exception ex)
             {
@@ -338,13 +435,759 @@ namespace ahis.template.identity.Services
             }
 
             // Invalidate all existing sessions
-            await _userManager.UpdateSecurityStampAsync(user);
+            var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+            if (!invalidation.Succeeded)
+                return Result.Fail("Failed to invalidate sessions.");
 
             _logger.LogInformation(
                 "Password changed successfully for user {UserId}",
                 userId);
 
             return Result.Ok();
+        }
+
+        public async Task<Result<string>> ReauthenticateAsync(
+            string userId,
+            string password,
+            string? twoFactorCode,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user) || user!.MustResetPassword || string.IsNullOrWhiteSpace(password))
+                return Result.Fail<string>("Re-authentication failed.");
+
+            if (!await _userManager.CheckPasswordAsync(user!, password))
+                return Result.Fail<string>("Re-authentication failed.");
+
+            if (user!.TwoFactorEnabled)
+            {
+                if (string.IsNullOrWhiteSpace(twoFactorCode) ||
+                    !await _userManager.VerifyTwoFactorTokenAsync(
+                        user,
+                        _userManager.Options.Tokens.AuthenticatorTokenProvider,
+                        twoFactorCode))
+                {
+                    return Result.Fail<string>("Re-authentication failed.");
+                }
+            }
+
+            return await _securityProof.CreateAsync(user, cancellationToken);
+        }
+
+        public async Task<Result> RevokeAllSessionsAsync(
+            string userId,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user) ||
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail("Unable to revoke sessions.");
+            }
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var invalidation = await _tokenState.InvalidateAsync(user!, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return OperationalSessionRevocationFailure();
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(user!.Email, "Sessions revoked", "All sessions for your account were revoked. Sign in again to continue.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Session revocation failed for user {UserId}", userId);
+                return OperationalSessionRevocationFailure();
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result<bool>> RevokeAdminUserSessionsAsync(
+            string actorUserId,
+            string targetUserId,
+            string? stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            // Validate the actor's proof before resolving the target so an invalid proof cannot
+            // reveal whether the requested account exists.
+            if (!await _securityProof.IsValidAsync(actorUserId, stepUpProof, cancellationToken))
+                return Result.Fail<bool>("Unable to revoke sessions.");
+
+            var target = await _userManager.FindByIdAsync(targetUserId);
+            if (target is null)
+                return Result.Ok(false);
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var invalidation = await _tokenState.InvalidateAsync(target, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return OperationalAdminSessionRevocationFailure();
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                return Result.Ok(true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Administrative session revocation failed for target user {TargetUserId}", targetUserId);
+                return OperationalAdminSessionRevocationFailure();
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result<AdminUserUnlockOutcome>> UnlockAdminUserAsync(
+            string actorUserId,
+            string targetUserId,
+            string? stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(actorUserId) ||
+                string.IsNullOrWhiteSpace(targetUserId) ||
+                actorUserId == targetUserId)
+                return Result.Fail<AdminUserUnlockOutcome>("Unable to unlock user.");
+
+            var actor = await _userManager.FindByIdAsync(actorUserId);
+            if (actor is null ||
+                !await _userManager.IsInRoleAsync(actor, Security.IdentityRoleNames.Superadmin) ||
+                !await _securityProof.IsValidAsync(actorUserId, stepUpProof, cancellationToken))
+                return Result.Fail<AdminUserUnlockOutcome>("Unable to unlock user.");
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var target = await _userManager.FindByIdAsync(targetUserId);
+                if (target is null)
+                    return Result.Ok(AdminUserUnlockOutcome.TargetNotFound);
+
+                var now = DateTime.UtcNow;
+                var restriction = await _restrictions.GetActiveAsync(targetUserId, cancellationToken);
+                if (!target.IsActive || target.IsDeleted || !target.LockoutEnabled)
+                    return Result.Fail<AdminUserUnlockOutcome>("Unable to unlock user.");
+
+                if (restriction is null && target.LockoutEnd is null)
+                    return Result.Ok(AdminUserUnlockOutcome.AlreadyUnlocked);
+
+                if (restriction is null ||
+                    restriction.Category != IdentityRestrictionCategory.OrdinaryLockout ||
+                    !restriction.ExpiresAtUtc.HasValue ||
+                    restriction.ExpiresAtUtc.Value <= now ||
+                    !target.LockoutEnd.HasValue ||
+                    target.LockoutEnd.Value <= now ||
+                    target.LockoutEnd.Value.UtcDateTime != restriction.ExpiresAtUtc.Value)
+                    return Result.Fail<AdminUserUnlockOutcome>("Unable to unlock user.");
+
+                if (!await _restrictions.CloseOrdinaryLockoutAsync(targetUserId, actorUserId, now, cancellationToken))
+                    return OperationalAdminUserUnlockFailure();
+
+                var lockoutResult = await _userManager.SetLockoutEndDateAsync(target, null);
+                if (!lockoutResult.Succeeded)
+                    return OperationalAdminUserUnlockFailure();
+
+                var resetResult = await _userManager.ResetAccessFailedCountAsync(target);
+                if (!resetResult.Succeeded)
+                    return OperationalAdminUserUnlockFailure();
+
+                var invalidation = await _tokenState.InvalidateAsync(target, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return OperationalAdminUserUnlockFailure();
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(
+                    target.Email,
+                    "Account unlocked",
+                    "Your account lockout was cleared. Sign in again to continue.");
+                return Result.Ok(AdminUserUnlockOutcome.Unlocked);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Administrative user unlock failed for target user {TargetUserId}", targetUserId);
+                return OperationalAdminUserUnlockFailure();
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result> RevokeSessionAsync(
+            string userId,
+            Guid sessionPublicId,
+            Guid? currentSessionId,
+            string? stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user))
+                return Result.Fail("Unable to revoke session.");
+
+            if (currentSessionId != sessionPublicId &&
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail("Unable to revoke session.");
+            }
+
+            try
+            {
+                var session = await _context.RefreshSessions
+                    .AsNoTracking()
+                    .Where(candidate => candidate.UserId == userId && candidate.PublicId == sessionPublicId)
+                    .Select(candidate => new { candidate.Id, candidate.IsRevoked })
+                    .SingleOrDefaultAsync(cancellationToken);
+
+                // A missing or already-ended owner session is an idempotent success. Filtering by owner
+                // prevents the response from disclosing whether another account owns the public ID.
+                if (session is null || session.IsRevoked)
+                    return Result.Ok();
+
+                var revokedAt = DateTime.UtcNow;
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+
+                var updated = await _context.RefreshSessions
+                    .Where(candidate => candidate.Id == session.Id && !candidate.IsRevoked)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(candidate => candidate.IsRevoked, true)
+                        .SetProperty(candidate => candidate.RevokedAt, revokedAt)
+                        .SetProperty(candidate => candidate.LastUsedAt, revokedAt), cancellationToken);
+
+                if (updated == 0)
+                    return Result.Ok();
+
+                await _context.RefreshTokens
+                    .Where(token => token.SessionId == session.Id && !token.IsRevoked)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(token => token.IsRevoked, true)
+                        .SetProperty(token => token.RevokedAt, revokedAt), cancellationToken);
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Single-session revocation failed for user {UserId}", userId);
+                return OperationalSessionRevocationFailure();
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result<(IReadOnlyList<ActiveSessionDto> Sessions, int TotalCount)>> GetActiveSessionsAsync(
+            string userId,
+            Guid? currentSessionId,
+            int pageNumber,
+            int pageSize,
+            CancellationToken cancellationToken)
+        {
+            var now = DateTime.UtcNow;
+            var sessions = _context.RefreshSessions
+                .AsNoTracking()
+                .Where(session => session.UserId == userId && !session.IsRevoked && session.ExpiresAt > now);
+
+            var totalCount = await sessions.CountAsync(cancellationToken);
+            var items = await sessions
+                .OrderByDescending(session => session.LastUsedAt)
+                .ThenByDescending(session => session.Id)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .Select(session => new ActiveSessionDto
+                {
+                    SessionId = session.PublicId,
+                    CreatedAt = session.CreatedAt,
+                    LastUsedAt = session.LastUsedAt,
+                    ExpiresAt = session.ExpiresAt,
+                    IsCurrent = currentSessionId.HasValue && session.PublicId == currentSessionId.Value
+                })
+                .ToListAsync(cancellationToken);
+
+            return Result.Ok(((IReadOnlyList<ActiveSessionDto>)items, totalCount));
+        }
+
+        public async Task<Result<SecuritySummaryDto>> GetSecuritySummaryAsync(
+            string userId,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user))
+                return Result.Fail<SecuritySummaryDto>("Unable to retrieve security summary.");
+
+            var now = DateTime.UtcNow;
+            var authenticatorKey = await _userManager.GetAuthenticatorKeyAsync(user!);
+            var recoveryCodeCount = await _userManager.CountRecoveryCodesAsync(user!);
+            var activeSessionCount = await _context.RefreshSessions
+                .AsNoTracking()
+                .CountAsync(session =>
+                    session.UserId == userId &&
+                    !session.IsRevoked &&
+                    session.ExpiresAt > now,
+                    cancellationToken);
+
+            return Result.Ok(new SecuritySummaryDto
+            {
+                EmailConfirmed = user!.EmailConfirmed,
+                PhoneConfirmed = user.PhoneNumberConfirmed,
+                PasswordPresent = await _userManager.HasPasswordAsync(user),
+                TwoFactorEnabled = user.TwoFactorEnabled,
+                AuthenticatorConfigured = !string.IsNullOrWhiteSpace(authenticatorKey),
+                RemainingRecoveryCodeCount = recoveryCodeCount,
+                ActiveSessionCount = activeSessionCount
+            });
+        }
+
+        public async Task<Result<AdminUserSecurityStateDto>> GetAdminUserSecurityStateAsync(
+            string userId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+                return Result.Fail<AdminUserSecurityStateDto>("A user ID is required.");
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null)
+                return Result.Fail<AdminUserSecurityStateDto>("User not found.");
+
+            var now = DateTime.UtcNow;
+            var authenticatorKey = await _userManager.GetAuthenticatorKeyAsync(user);
+            var recoveryCodeCount = await _userManager.CountRecoveryCodesAsync(user);
+            var activeSessionCount = await _context.RefreshSessions
+                .AsNoTracking()
+                .CountAsync(session =>
+                    session.UserId == userId &&
+                    !session.IsRevoked &&
+                    session.ExpiresAt > now,
+                    cancellationToken);
+
+            var effectiveRestriction = await new IdentityRestrictionService(_context)
+                .GetEffectiveAsync(user.Id, DateTime.UtcNow, cancellationToken);
+            return Result.Ok(new AdminUserSecurityStateDto
+            {
+                UserId = user.Id,
+                IsActive = user.IsActive,
+                IsDeleted = user.IsDeleted,
+                IsLockedOut = effectiveRestriction is not null,
+                EmailConfirmed = user.EmailConfirmed,
+                PhoneConfirmed = user.PhoneNumberConfirmed,
+                PasswordPresent = await _userManager.HasPasswordAsync(user),
+                TwoFactorEnabled = user.TwoFactorEnabled,
+                AuthenticatorConfigured = !string.IsNullOrWhiteSpace(authenticatorKey),
+                RemainingRecoveryCodeCount = recoveryCodeCount,
+                ActiveSessionCount = activeSessionCount
+            });
+        }
+
+        public async Task<Result<IEnumerable<string>>> RegenerateRecoveryCodesAsync(
+            string userId,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (!_tokenState.IsEligible(user) || user!.MustResetPassword || !user.TwoFactorEnabled ||
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail<IEnumerable<string>>("Unable to regenerate recovery codes.");
+            }
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 10);
+                var codes = recoveryCodes?.ToArray() ?? Array.Empty<string>();
+                if (codes.Length != 10)
+                    return Result.Fail<IEnumerable<string>>("Unable to regenerate recovery codes.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(
+                    user.Email,
+                    "Recovery codes regenerated",
+                    "Your recovery codes were regenerated. Previous recovery codes can no longer be used.");
+                return Result.Ok(codes.AsEnumerable());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Recovery-code regeneration failed for user {UserId}", userId);
+                return Result.Fail<IEnumerable<string>>("Unable to regenerate recovery codes.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result> ResetAuthenticatorAsync(
+            string userId,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null ||
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail("Unable to reset authenticator.");
+            }
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var disableResult = await _userManager.SetTwoFactorEnabledAsync(user, false);
+                var resetResult = disableResult.Succeeded
+                    ? await _userManager.ResetAuthenticatorKeyAsync(user)
+                    : IdentityResult.Failed();
+                if (!resetResult.Succeeded)
+                    return Result.Fail("Unable to reset authenticator.");
+
+                var recoveryCodes = await _userManager.GenerateNewTwoFactorRecoveryCodesAsync(user, 0);
+                if (recoveryCodes is null)
+                    return Result.Fail("Unable to reset authenticator.");
+
+                user.AuthenticatorKey = null;
+                user.AuthenticatorUri = null;
+                user.TwoFactorEnabledAt = null;
+                user.UpdatedAt = DateTime.UtcNow;
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail("Unable to reset authenticator.");
+
+                var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return Result.Fail("Unable to reset authenticator.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(user.Email, "Authenticator reset", "Your authenticator was reset. Configure and verify a new authenticator before enabling two-factor authentication again.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Authenticator reset failed for user {UserId}", userId);
+                return Result.Fail("Unable to reset authenticator.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result> RequestEmailChangeAsync(
+            string userId,
+            string newEmail,
+            string callbackBaseUrl,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null || string.IsNullOrWhiteSpace(newEmail) || string.IsNullOrWhiteSpace(callbackBaseUrl) ||
+                !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+            {
+                return Result.Fail("Unable to process email change.");
+            }
+
+            var existing = await _userManager.FindByEmailAsync(newEmail);
+            if (existing is not null && existing.Id != user.Id)
+                return Result.Fail("Unable to process email change.");
+
+            try
+            {
+                var token = await _userManager.GenerateChangeEmailTokenAsync(user, newEmail);
+                var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+                var callbackUrl = BuildCallbackUrl(callbackBaseUrl, "account/change-email/confirm", new Dictionary<string, string>
+                {
+                    ["userId"] = user.Id,
+                    ["newEmail"] = newEmail,
+                    ["token"] = encodedToken
+                });
+
+                await _emailSender.SendEmailAsync(
+                    newEmail,
+                    "Confirm your new email address",
+                    $"Confirm your new email address by <a href=\"{callbackUrl}\">clicking here</a>.");
+                await NotifySecurityChangeAsync(user.Email, "Email change requested", "A request was made to change the email address on your account.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Email change request failed for user {UserId}", userId);
+                return Result.Fail("Unable to process email change.");
+            }
+        }
+
+        public async Task<Result> ConfirmEmailChangeAsync(
+            string userId,
+            string newEmail,
+            string token,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(newEmail) || string.IsNullOrWhiteSpace(token))
+                return Result.Fail("Unable to confirm email change.");
+
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null)
+                return Result.Fail("Unable to confirm email change.");
+
+            try
+            {
+                var decodedToken = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(token));
+                var previousEmail = user.Email;
+                var userNameMatchesPreviousEmail = string.Equals(user.UserName, previousEmail, StringComparison.OrdinalIgnoreCase);
+
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var changeResult = await _userManager.ChangeEmailAsync(user, newEmail, decodedToken);
+                if (!changeResult.Succeeded)
+                    return Result.Fail("Unable to confirm email change.");
+
+                if (userNameMatchesPreviousEmail)
+                {
+                    var userNameResult = await _userManager.SetUserNameAsync(user, newEmail);
+                    if (!userNameResult.Succeeded)
+                        return Result.Fail("Unable to confirm email change.");
+                }
+
+                user.EmailVerifiedAt = DateTime.UtcNow;
+                user.UpdatedAt = DateTime.UtcNow;
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail("Unable to confirm email change.");
+
+                var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return Result.Fail("Unable to confirm email change.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(previousEmail, "Email address changed", "The email address on your account was changed.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Email change confirmation failed for user {UserId}", userId);
+                return Result.Fail("Unable to confirm email change.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
+        }
+
+        public async Task<Result<AdminUserControlOutcome>> DisableAdminUserAsync(string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken)
+        {
+            if (!await AuthorizeAdminControlAsync(actorUserId, stepUpProof, cancellationToken))
+                return Result.Fail<AdminUserControlOutcome>("Unable to disable user.");
+            await using var transaction = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+            try
+            {
+                if (!await _effectiveSuperadminLock.AcquireAsync(cancellationToken))
+                    return AdminControlOperationalFailure();
+                if (!await IsCurrentSuperadminAsync(actorUserId, cancellationToken)) return Result.Fail<AdminUserControlOutcome>("Unable to disable user.");
+                var target = await _userManager.FindByIdAsync(targetUserId);
+                if (target is null) return Result.Ok(AdminUserControlOutcome.TargetNotFound);
+                if (!target.IsActive || target.IsDeleted || target.LockoutEnd.HasValue)
+                    return Result.Fail<AdminUserControlOutcome>("Unable to disable user.");
+                var active = await _context.IdentityUserRestrictions.SingleOrDefaultAsync(x => x.UserId == targetUserId && x.EndedAtUtc == null, cancellationToken);
+                if (active?.Category == IdentityRestrictionCategory.AdministrativeSecurityHold)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                    return Result.Ok(AdminUserControlOutcome.AlreadyInRequestedState);
+                }
+                if (active is not null || target.LockoutEnd.HasValue)
+                    return Result.Fail<AdminUserControlOutcome>("Unable to disable user.");
+                if (await HasSuperadminRoleAsync(targetUserId, cancellationToken) && await CountEffectiveSuperadminsAsync(cancellationToken) <= 1)
+                    return Result.Fail<AdminUserControlOutcome>("Unable to disable user.");
+
+                var now = DateTime.UtcNow;
+                _context.IdentityUserRestrictions.Add(new IdentityUserRestriction { UserId = targetUserId, Category = IdentityRestrictionCategory.AdministrativeSecurityHold, StartedAtUtc = now, Origin = "AdministrativeDisable", PlacedByUserId = actorUserId });
+                if (!(await _tokenState.InvalidateAsync(target, cancellationToken)).Succeeded)
+                    return AdminControlOperationalFailure();
+                await _context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                await NotifySecurityChangeAsync(target.Email, "Account security update", "An administrator changed your account access. Contact support if you need help.");
+                return Result.Ok(AdminUserControlOutcome.Changed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Administrative disable failed for target user {TargetUserId}", targetUserId);
+                return AdminControlOperationalFailure();
+            }
+            finally { await _unitOfWork.RollbackTransactionAsync(CancellationToken.None); }
+        }
+
+        public async Task<Result<AdminUserControlOutcome>> EnableAdminUserAsync(string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken)
+        {
+            if (!await AuthorizeAdminControlAsync(actorUserId, stepUpProof, cancellationToken))
+                return Result.Fail<AdminUserControlOutcome>("Unable to enable user.");
+            await using var transaction = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+            try
+            {
+                if (!await _effectiveSuperadminLock.AcquireAsync(cancellationToken))
+                    return AdminControlOperationalFailure();
+                if (!await IsCurrentSuperadminAsync(actorUserId, cancellationToken)) return Result.Fail<AdminUserControlOutcome>("Unable to enable user.");
+                var target = await _userManager.FindByIdAsync(targetUserId);
+                if (target is null) return Result.Ok(AdminUserControlOutcome.TargetNotFound);
+                if (!target.IsActive || target.IsDeleted || target.LockoutEnd.HasValue)
+                    return Result.Fail<AdminUserControlOutcome>("Unable to enable user.");
+                var active = await _context.IdentityUserRestrictions.SingleOrDefaultAsync(x => x.UserId == targetUserId && x.EndedAtUtc == null, cancellationToken);
+                if (active is null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                    return Result.Ok(AdminUserControlOutcome.AlreadyInRequestedState);
+                }
+                if (active.Category != IdentityRestrictionCategory.AdministrativeSecurityHold)
+                    return Result.Fail<AdminUserControlOutcome>("Unable to enable user.");
+                active.EndedAtUtc = DateTime.UtcNow;
+                active.EndedByUserId = actorUserId;
+                if (!(await _tokenState.InvalidateAsync(target, cancellationToken)).Succeeded)
+                    return AdminControlOperationalFailure();
+                await _context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                await NotifySecurityChangeAsync(target.Email, "Account security update", "An administrator changed your account access. Contact support if you need help.");
+                return Result.Ok(AdminUserControlOutcome.Changed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Administrative enable failed for target user {TargetUserId}", targetUserId);
+                return AdminControlOperationalFailure();
+            }
+            finally { await _unitOfWork.RollbackTransactionAsync(CancellationToken.None); }
+        }
+
+        public Task<Result<AdminUserControlOutcome>> ResetAdminUserMfaAsync(string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken) =>
+            ExecuteAdminUserCredentialControlAsync(actorUserId, targetUserId, stepUpProof, cancellationToken, "reset MFA", null, async target =>
+            {
+                var disabled = await _userManager.SetTwoFactorEnabledAsync(target, false);
+                var reset = disabled.Succeeded ? await _userManager.ResetAuthenticatorKeyAsync(target) : IdentityResult.Failed();
+                var clearedRecoveryCodes = reset.Succeeded && await _userManager.CountRecoveryCodesAsync(target) == 0;
+                if (!disabled.Succeeded || !reset.Succeeded || !clearedRecoveryCodes)
+                    return false;
+                target.AuthenticatorKey = null;
+                target.AuthenticatorUri = null;
+                target.TwoFactorEnabledAt = null;
+                return true;
+            }, "Your account authenticator was reset. Set up and verify a new authenticator before enabling two-factor authentication again.");
+
+        public Task<Result<AdminUserControlOutcome>> RequireAdminUserPasswordResetAsync(string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken) =>
+            ExecuteAdminUserCredentialControlAsync(actorUserId, targetUserId, stepUpProof, cancellationToken, "require password reset", AdminUserControlOutcome.AlreadyInRequestedState, async target =>
+            {
+                target.MustResetPassword = true;
+                return true;
+            }, "An administrator requires you to reset your password before signing in again.");
+
+        private async Task<Result<AdminUserControlOutcome>> ExecuteAdminUserCredentialControlAsync(
+            string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken,
+            string operation, AdminUserControlOutcome? alreadyApplied, Func<ApplicationUser, Task<bool>> mutation, string notification)
+        {
+            if (string.IsNullOrWhiteSpace(actorUserId) || string.IsNullOrWhiteSpace(targetUserId) || actorUserId == targetUserId ||
+                !await AuthorizeAdminControlAsync(actorUserId, stepUpProof, cancellationToken))
+                return Result.Fail<AdminUserControlOutcome>($"Unable to {operation}.");
+            await using var transaction = await _context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+            try
+            {
+                if (!await IsCurrentSuperadminAsync(actorUserId, cancellationToken))
+                    return Result.Fail<AdminUserControlOutcome>($"Unable to {operation}.");
+                var target = await _userManager.FindByIdAsync(targetUserId);
+                if (target is null) return Result.Ok(AdminUserControlOutcome.TargetNotFound);
+                if (alreadyApplied.HasValue && target.MustResetPassword)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                    return Result.Ok(alreadyApplied.Value);
+                }
+                if (!target.IsActive || target.IsDeleted || target.IsLockedOut || !await _restrictions.IsAuthenticationAllowedAsync(target, cancellationToken) ||
+                    await _restrictions.GetActiveAsync(target.Id, cancellationToken) is not null)
+                    return Result.Fail<AdminUserControlOutcome>($"Unable to {operation}.");
+                if (!await mutation(target)) return AdminControlOperationalFailure();
+                target.UpdatedAt = DateTime.UtcNow;
+                var update = await _userManager.UpdateAsync(target);
+                if (!update.Succeeded || !(await _tokenState.InvalidateAsync(target, cancellationToken)).Succeeded)
+                    return AdminControlOperationalFailure();
+                await _context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                await NotifySecurityChangeAsync(target.Email, "Account security update", notification);
+                return Result.Ok(AdminUserControlOutcome.Changed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Administrative credential control failed for target user {TargetUserId}", targetUserId);
+                return AdminControlOperationalFailure();
+            }
+            finally { await _unitOfWork.RollbackTransactionAsync(CancellationToken.None); }
+        }
+
+        private async Task<bool> AuthorizeAdminControlAsync(string actorUserId, string? proof, CancellationToken cancellationToken)
+        {
+            var actor = await _userManager.FindByIdAsync(actorUserId);
+            return actor is not null && !actor.MustResetPassword && _tokenState.IsEligible(actor) && await _securityProof.IsValidAsync(actorUserId, proof, cancellationToken) && await _userManager.IsInRoleAsync(actor, IdentityRoleNames.Superadmin);
+        }
+
+        private Task<bool> HasSuperadminRoleAsync(string userId, CancellationToken cancellationToken) =>
+            (from membership in _context.UserRoles join role in _context.Roles on membership.RoleId equals role.Id
+             where membership.UserId == userId && role.NormalizedName == "SUPERADMIN" select membership).AnyAsync(cancellationToken);
+
+        private async Task<bool> IsCurrentSuperadminAsync(string userId, CancellationToken cancellationToken)
+        {
+            var user = await _context.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+            return user is not null && _tokenState.IsEligible(user) && await _restrictions.IsAuthenticationAllowedAsync(user, cancellationToken) && await HasSuperadminRoleAsync(userId, cancellationToken);
+        }
+
+        private async Task<int> CountEffectiveSuperadminsAsync(CancellationToken cancellationToken)
+        {
+            var users = await (from membership in _context.UserRoles join role in _context.Roles on membership.RoleId equals role.Id
+                join user in _context.Users on membership.UserId equals user.Id where role.NormalizedName == "SUPERADMIN" select user).ToListAsync(cancellationToken);
+            var count = 0;
+            foreach (var user in users)
+                if (_tokenState.IsEligible(user) && await _restrictions.IsAuthenticationAllowedAsync(user, cancellationToken)) count++;
+            return count;
+        }
+
+        private static Result<AdminUserControlOutcome> AdminControlOperationalFailure() =>
+            Result.Fail<AdminUserControlOutcome>(new Error("Unable to complete administrative account change.").WithMetadata("OperationalFailure", true));
+
+        public async Task<Result> DeactivateAsync(
+            string userId,
+            bool confirmation,
+            string stepUpProof,
+            CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null || !confirmation || !await _securityProof.IsValidAsync(userId, stepUpProof, cancellationToken))
+                return Result.Fail("Unable to deactivate account.");
+
+            try
+            {
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                if (!await _effectiveSuperadminLock.AcquireAsync(cancellationToken))
+                    return Result.Fail("Unable to deactivate account.");
+                if (await HasSuperadminRoleAsync(userId, cancellationToken) && !await IsCurrentSuperadminAsync(userId, cancellationToken))
+                    return Result.Fail("Unable to deactivate account.");
+                if (await HasSuperadminRoleAsync(userId, cancellationToken) && await CountEffectiveSuperadminsAsync(cancellationToken) <= 1)
+                    return Result.Fail("Unable to deactivate account.");
+                user.IsActive = false;
+                user.IsDeleted = true;
+                user.DeletedAt = DateTime.UtcNow;
+                user.UpdatedAt = DateTime.UtcNow;
+                var updateResult = await _userManager.UpdateAsync(user);
+                if (!updateResult.Succeeded)
+                    return Result.Fail("Unable to deactivate account.");
+
+                var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+                if (!invalidation.Succeeded)
+                    return Result.Fail("Unable to deactivate account.");
+
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                await NotifySecurityChangeAsync(user.Email, "Account deactivated", "Your account was deactivated. Contact support if you need help with account recovery.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Account deactivation failed for user {UserId}", userId);
+                return Result.Fail("Unable to deactivate account.");
+            }
+            finally
+            {
+                await _unitOfWork.RollbackTransactionAsync(CancellationToken.None);
+            }
         }
 
         public async Task<Result> ResendConfirmationEmailAsync(string email, string callbackBaseUrl, CancellationToken cancellationToken)
@@ -354,14 +1197,13 @@ namespace ahis.template.identity.Services
                 var user = await _userManager.FindByEmailAsync(email);
 
 
-                if (user == null)
-                {
-                    return Result.Fail("Fail to re-send confirmation email");
-                }
-
+                if (user == null || !_tokenState.IsEligible(user))
+                    return Result.Ok();
 
                 if (user.EmailConfirmed)
                 {
+                    if (!await _userManager.HasPasswordAsync(user))
+                        await SendInitialPasswordSetupEmailAsync(user, cancellationToken);
                     return Result.Ok();
                 }
 
@@ -393,7 +1235,7 @@ namespace ahis.template.identity.Services
                     "Failed to resend confirmation email for {Email}",
                     email);
 
-                return Result.Fail($"Failed to resend confirmation email for {email}");
+                return Result.Ok();
             }
         }
 
@@ -426,6 +1268,70 @@ namespace ahis.template.identity.Services
 
 
         #region Helpers
+
+        private async Task<Result> SendInitialPasswordSetupEmailAsync(
+            ApplicationUser user,
+            CancellationToken cancellationToken)
+        {
+            var callbackBaseUrl = _configuration["Identity:PublicClientBaseUrl"];
+            if (string.IsNullOrWhiteSpace(callbackBaseUrl))
+            {
+                _logger.LogError("Initial password setup email cannot be sent because Identity:PublicClientBaseUrl is not configured.");
+                return Result.Fail("Password setup email is unavailable.");
+            }
+
+            var token = await _userManager.GenerateUserTokenAsync(
+                user,
+                InitialPasswordSetupTokenProvider.ProviderName,
+                InitialPasswordSetupTokenProvider.Purpose);
+            var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+            var callbackUrl = BuildCallbackUrl(callbackBaseUrl, "set-password", new Dictionary<string, string>
+            {
+                ["userId"] = user.Id,
+                ["token"] = encodedToken
+            });
+
+            try
+            {
+                await _emailSender.SendEmailAsync(
+                    user.Email!,
+                    "Set your password",
+                    $"Set your password by <a href=\"{callbackUrl}\">opening this secure link</a>.");
+                return Result.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send initial password setup email.");
+                return Result.Fail("Password setup email is unavailable.");
+            }
+        }
+
+        private async Task NotifySecurityChangeAsync(string? email, string subject, string message)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+                return;
+
+            try
+            {
+                await _emailSender.SendEmailAsync(email, subject, message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send security notification {Subject}", subject);
+            }
+        }
+
+        private static Result OperationalSessionRevocationFailure() =>
+            Result.Fail(new Error("Unable to revoke sessions.")
+                .WithMetadata("OperationalFailure", true));
+
+        private static Result<bool> OperationalAdminSessionRevocationFailure() =>
+            Result.Fail<bool>(new Error("Unable to revoke sessions.")
+                .WithMetadata("OperationalFailure", true));
+
+        private static Result<AdminUserUnlockOutcome> OperationalAdminUserUnlockFailure() =>
+            Result.Fail<AdminUserUnlockOutcome>(new Error("Unable to unlock user.")
+                .WithMetadata("OperationalFailure", true));
 
         private string BuildCallbackUrl(string baseUrl, string path, IDictionary<string, string> query)
         {
