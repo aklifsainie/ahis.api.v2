@@ -145,6 +145,15 @@ namespace ahis.template.api
                     });
 
                 options.AddPolicy(
+                    "IdentityAdminUserAccessPolicy",
+                    policy =>
+                    {
+                        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+                        policy.RequireAuthenticatedUser();
+                        policy.RequireRole(IdentityRoleNames.Superadmin);
+                    });
+
+                options.AddPolicy(
                     "IdentityRoleReadPolicy",
                     policy =>
                     {
@@ -340,7 +349,16 @@ namespace ahis.template.api
                             Window = TimeSpan.FromMinutes(1),
                             QueueLimit = 0,
                             AutoReplenishment = true
-                        }));
+                    }));
+
+                options.AddPolicy("PasskeyPolicy", context =>
+                {
+                    var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+                    return RateLimitPartition.GetFixedWindowLimiter(
+                        "passkey:" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown") + ":" +
+                        (string.IsNullOrWhiteSpace(userId) ? "anonymous" : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(userId)))),
+                        _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true });
+                });
 
                 options.AddPolicy("RefreshPolicy", context =>
                     RateLimitPartition.GetFixedWindowLimiter(

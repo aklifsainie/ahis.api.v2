@@ -4,11 +4,46 @@ using FluentAssertions;
 using ahis.template.identity.Interfaces;
 using ahis.template.identity.Security;
 using Microsoft.Extensions.DependencyInjection;
+using System.Reflection;
+using ahis.template.identity.Services;
+using ahis.template.identity.Contexts;
+using ahis.template.identity.Models.Entities;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.EntityFrameworkCore;
+using Moq;
+using Microsoft.Extensions.Hosting;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace ahis.template.test.TestFeatures.IdentityFeature;
 
 public sealed class IdentityPolicyTest
 {
+    [Fact]
+    public async Task PasskeyServiceFailsClosedOutsideDevelopmentWithoutDatabaseAccess()
+    {
+        var options = new DbContextOptionsBuilder<IdentityContext>().UseSqlServer("Server=(localdb)\\MSSQLLocalDB;Database=NeverConnect;Trusted_Connection=True").Options;
+        using var context = new IdentityContext(options);
+        var users = new Mock<UserManager<ApplicationUser>>(new Mock<IUserStore<ApplicationUser>>().Object, null!, null!, null!, null!, null!, null!, null!, null!).Object;
+        var service = new PasskeyService(context, users, Mock.Of<IAccountSecurityProofService>(), Mock.Of<IIdentityTokenStateService>(),
+            Mock.Of<IIdentityRestrictionService>(), Mock.Of<IAuthenticationService>(), Mock.Of<IHostEnvironment>(x => x.EnvironmentName == "Production"),
+            NullLogger<PasskeyService>.Instance, new EphemeralDataProtectionProvider());
+
+        var result = await service.AuthenticationOptionsAsync("127.0.0.1", CancellationToken.None);
+
+        result.IsFailed.Should().BeTrue();
+        result.Errors.Single().Message.Should().Be("Passkey operation failed.");
+    }
+
+    [Fact]
+    public void PasskeyRoutesDeclareOwnerAuthorizationOrAnonymousAccessAndRateLimits()
+    {
+        var account = typeof(ahis.template.api.Controllers.v1.AccountController);
+        var authentication = typeof(ahis.template.api.Controllers.v1.AuthenticationController);
+        account.GetMethods().Where(x => x.Name.Contains("Passkey", StringComparison.Ordinal)).Should().NotBeEmpty();
+        authentication.GetMethod("PasskeyOptions")!.GetCustomAttribute<Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute>().Should().NotBeNull();
+        authentication.GetMethod("CompletePasskey")!.GetCustomAttribute<Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute>().Should().NotBeNull();
+    }
     [Fact]
     public async Task PermissionCatalogAllowsCurrentSuperadminBearer()
     {

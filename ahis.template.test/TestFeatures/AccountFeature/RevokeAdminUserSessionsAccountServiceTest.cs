@@ -70,7 +70,8 @@ public class RevokeAdminUserSessionsAccountServiceTest
             securityProof,
             Mock.Of<IIdentityRestrictionService>(),
             new IdentityUnitOfWork(context),
-            context);
+            context,
+            Mock.Of<IEffectiveSuperadminLock>());
     }
 
     private static Mock<UserManager<ApplicationUser>> CreateUserManager() =>

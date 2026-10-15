@@ -10,6 +10,102 @@ namespace ahis.template.test.TestFeatures.IdentityFeature;
 public sealed class IdentityConcurrencyTest
 {
     [Fact]
+    public async Task ConcurrentDisableOfBothSuperadminsCannotRemoveTheFinalEffectiveAdministrator()
+    {
+        await using var host = new IdentityPolicyHost();
+        await host.InitializeAsync();
+        await host.AddUserAsync("lock-admin-a", IdentityRoleNames.Superadmin);
+        await host.AddUserAsync("lock-admin-b", IdentityRoleNames.Superadmin);
+        var firstId = await host.GetUserIdAsync("lock-admin-a");
+        var secondId = await host.GetUserIdAsync("lock-admin-b");
+        await host.AssignRoleAsync(firstId, IdentityRoleNames.Superadmin);
+        await host.AssignRoleAsync(secondId, IdentityRoleNames.Superadmin);
+        var firstProof = await host.CreateProofAsync(firstId);
+        var secondProof = await host.CreateProofAsync(secondId);
+        using var firstScope = host.Services.CreateScope();
+        using var secondScope = host.Services.CreateScope();
+        var firstAccount = firstScope.ServiceProvider.GetRequiredService<IAccountService>();
+        var secondAccount = secondScope.ServiceProvider.GetRequiredService<IAccountService>();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = Task.Run(async () => { await ready.Task; return await firstAccount.DisableAdminUserAsync(firstId, secondId, firstProof, CancellationToken.None); });
+        var second = Task.Run(async () => { await ready.Task; return await secondAccount.DisableAdminUserAsync(secondId, firstId, secondProof, CancellationToken.None); });
+        ready.SetResult();
+
+        var results = await Task.WhenAll(first, second);
+
+        results.Count(result => result.IsSuccess && result.Value == AdminUserControlOutcome.Changed).Should().Be(1);
+        await AssertAtLeastOneEffectiveSuperadminAsync(host);
+    }
+
+    [Fact]
+    public async Task ConcurrentDisableAndRoleRemovalCannotRemoveTheFinalEffectiveAdministrator()
+    {
+        await using var host = new IdentityPolicyHost();
+        await host.InitializeAsync();
+        await host.AddUserAsync("disable-role-a", IdentityRoleNames.Superadmin);
+        await host.AddUserAsync("disable-role-b", IdentityRoleNames.Superadmin);
+        var firstId = await host.GetUserIdAsync("disable-role-a");
+        var secondId = await host.GetUserIdAsync("disable-role-b");
+        await host.AssignRoleAsync(firstId, IdentityRoleNames.Superadmin);
+        await host.AssignRoleAsync(secondId, IdentityRoleNames.Superadmin);
+        var firstProof = await host.CreateProofAsync(firstId);
+        var secondProof = await host.CreateProofAsync(secondId);
+        using var firstScope = host.Services.CreateScope();
+        using var secondScope = host.Services.CreateScope();
+        var account = firstScope.ServiceProvider.GetRequiredService<IAccountService>();
+        var roles = secondScope.ServiceProvider.GetRequiredService<IIdentityRoleManagementService>();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disable = Task.Run(async () => { await ready.Task; return await account.DisableAdminUserAsync(firstId, secondId, firstProof, CancellationToken.None); });
+        var demote = Task.Run(async () => { await ready.Task; return await roles.ReplaceUserRolesAsync(secondId, secondProof, firstId, [], CancellationToken.None); });
+        ready.SetResult();
+
+        await Task.WhenAll(disable, demote);
+
+        await AssertAtLeastOneEffectiveSuperadminAsync(host);
+    }
+
+    [Fact]
+    public async Task ConcurrentSelfDeactivationAndRoleRemovalKeepEffectiveSuperadmin()
+    {
+        await using var host = new IdentityPolicyHost();
+        await host.InitializeAsync();
+        await host.AddUserAsync("deactivate-role-a", IdentityRoleNames.Superadmin);
+        await host.AddUserAsync("deactivate-role-b", IdentityRoleNames.Superadmin);
+        var firstId = await host.GetUserIdAsync("deactivate-role-a");
+        var secondId = await host.GetUserIdAsync("deactivate-role-b");
+        await host.AssignRoleAsync(firstId, IdentityRoleNames.Superadmin);
+        await host.AssignRoleAsync(secondId, IdentityRoleNames.Superadmin);
+        var firstProof = await host.CreateProofAsync(firstId);
+        var secondProof = await host.CreateProofAsync(secondId);
+        using var firstScope = host.Services.CreateScope();
+        using var secondScope = host.Services.CreateScope();
+        var account = firstScope.ServiceProvider.GetRequiredService<IAccountService>();
+        var roles = secondScope.ServiceProvider.GetRequiredService<IIdentityRoleManagementService>();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deactivate = Task.Run(async () => { await ready.Task; return await account.DeactivateAsync(firstId, true, firstProof, CancellationToken.None); });
+        var demote = Task.Run(async () => { await ready.Task; return await roles.ReplaceUserRolesAsync(secondId, secondProof, firstId, [], CancellationToken.None); });
+        ready.SetResult();
+
+        await Task.WhenAll(deactivate, demote);
+
+        await AssertAtLeastOneEffectiveSuperadminAsync(host);
+    }
+
+    private static async Task AssertAtLeastOneEffectiveSuperadminAsync(IdentityPolicyHost host)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<IdentityContext>();
+        var tokenState = scope.ServiceProvider.GetRequiredService<IIdentityTokenStateService>();
+        var restrictions = scope.ServiceProvider.GetRequiredService<IIdentityRestrictionService>();
+        var users = await (from membership in context.UserRoles join role in context.Roles on membership.RoleId equals role.Id
+            join user in context.Users on membership.UserId equals user.Id where role.NormalizedName == "SUPERADMIN" select user).ToListAsync();
+        var count = 0;
+        foreach (var user in users)
+            if (tokenState.IsEligible(user) && await restrictions.IsAuthenticationAllowedAsync(user)) count++;
+        count.Should().BeGreaterThanOrEqualTo(1);
+    }
+
+    [Fact]
     public async Task ConcurrentCrossDemotionPreservesAnEffectiveSuperadmin()
     {
         await using var host = new IdentityPolicyHost();

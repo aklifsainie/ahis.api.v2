@@ -18,6 +18,8 @@ namespace ahis.template.identity.Contexts
         public DbSet<IdentityUserRestriction> IdentityUserRestrictions { get; set; }
         public DbSet<IdentityRoleBootstrapState> IdentityRoleBootstrapStates { get; set; }
         public DbSet<FirstSuperadminBootstrap> FirstSuperadminBootstraps { get; set; }
+        public DbSet<PasskeyCredential> PasskeyCredentials { get; set; }
+        public DbSet<PasskeyCeremony> PasskeyCeremonies { get; set; }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -27,6 +29,7 @@ namespace ahis.template.identity.Contexts
             builder.Entity<ApplicationUser>(b =>
             {
                 b.ToTable("IdentityUsers");
+                b.Property(x => x.MustResetPassword).HasDefaultValue(false).IsRequired();
             });
 
             builder.Entity<IdentityRole>(b =>
@@ -156,6 +159,42 @@ namespace ahis.template.identity.Contexts
                 b.HasKey(x => x.Id);
                 b.Property(x => x.TargetUserId).IsRequired().HasMaxLength(450);
                 b.Property(x => x.CompletedAtUtc).IsRequired();
+            });
+
+            builder.Entity<PasskeyCredential>(b =>
+            {
+                b.ToTable("PasskeyCredentials");
+                b.HasKey(x => x.Id);
+                b.Property(x => x.CredentialId).IsRequired().HasMaxLength(1024);
+                b.Property(x => x.UserId).IsRequired().HasMaxLength(450);
+                b.Property(x => x.PublicKey).IsRequired();
+                b.Property(x => x.DisplayName).IsRequired().HasMaxLength(80);
+                b.Property(x => x.CreatedAtUtc).IsRequired();
+                b.Property(x => x.IsBackupEligible).HasDefaultValue(false);
+                b.Property(x => x.IsBackedUp).HasDefaultValue(false);
+                b.HasIndex(x => x.CredentialId).IsUnique();
+                b.HasIndex(x => new { x.UserId, x.CreatedAtUtc });
+                b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            builder.Entity<PasskeyCeremony>(b =>
+            {
+                b.ToTable("PasskeyCeremonies", table => table.HasCheckConstraint("CK_PasskeyCeremonies_Purpose", "[Purpose] IN (1, 2)"));
+                b.HasKey(x => x.Id);
+                b.Property(x => x.ChallengeReferenceHash).IsRequired().HasColumnType("binary(32)");
+                b.Property(x => x.ChallengeHash).IsRequired().HasColumnType("binary(32)");
+                b.Property(x => x.Purpose).IsRequired();
+                b.Property(x => x.UserId).HasMaxLength(450);
+                b.Property(x => x.SecurityVersion).HasMaxLength(64);
+                b.Property(x => x.RpConfigurationId).IsRequired().HasMaxLength(100);
+                b.Property(x => x.RateLimitKeyHash).IsRequired().HasMaxLength(64);
+                b.Property(x => x.UserRateLimitKeyHash).HasMaxLength(64);
+                b.Property(x => x.CreatedAtUtc).IsRequired();
+                b.Property(x => x.OptionsJson).IsRequired();
+                b.Property(x => x.ProtectedChallenge).IsRequired();
+                b.HasIndex(x => x.ChallengeReferenceHash).IsUnique();
+                b.HasIndex(x => new { x.Purpose, x.UserId, x.ExpiresAtUtc, x.ConsumedAtUtc });
+                b.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
             });
         }
     }

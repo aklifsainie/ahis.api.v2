@@ -38,7 +38,9 @@ public class RoleStoreModelTest
         var operations = new ConsolidateIdentityRoleStore().UpOperations;
 
         var guard = Assert.IsType<SqlOperation>(operations[0]);
-        Assert.Contains("IF EXISTS (SELECT 1 FROM [IdentityRoles])", guard.Sql);
+        Assert.Contains("OBJECT_ID(N'[dbo].[IdentityRoles]', N'U') IS NULL", guard.Sql);
+        Assert.Contains("CREATE TABLE [dbo].[IdentityRoles]", guard.Sql);
+        Assert.Contains("IdentityRoles contains rows; reconcile them before consolidating the role store.", guard.Sql);
         Assert.Contains(operations, operation => operation is DropTableOperation drop && drop.Name == "IdentityRoles");
         Assert.Contains(operations, operation => operation is RenameTableOperation rename &&
             rename.Name == "AspNetRoles" && rename.NewName == "IdentityRole");

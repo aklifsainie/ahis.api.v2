@@ -5,6 +5,7 @@ using ahis.template.identity.Contexts;
 using ahis.template.identity.Interfaces;
 using ahis.template.identity.Models;
 using ahis.template.identity.Models.Entities;
+using ahis.template.identity.Models.DTOs;
 using ahis.template.identity.SharedKernel;
 using FluentResults;
 using Microsoft.AspNetCore.Identity;
@@ -36,6 +37,7 @@ namespace ahis.template.identity.Services
         private readonly IIdentityRestrictionService _restrictions;
         private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor _httpContextAccessor;
 
+
         public AuthenticationService(
             UserManager<ApplicationUser> userManager,
             SignInManager<ApplicationUser> signInManager,
@@ -60,6 +62,27 @@ namespace ahis.template.identity.Services
             _httpContextAccessor = httpContextAccessor;
         }
 
+
+        public async Task<Result<AuthenticationResponseVM>> IssuePasskeySessionAsync(string userId, CancellationToken cancellationToken)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user is null || user.MustResetPassword || !await _restrictions.IsAuthenticationAllowedAsync(user))
+                return Result.Fail<AuthenticationResponseVM>("Passkey operation failed.");
+            var securityVersion = _tokenState.GetSecurityVersion(user);
+            if (securityVersion is null) return Result.Fail<AuthenticationResponseVM>("Passkey operation failed.");
+            var (refreshToken, refreshExpiresAt) = GenerateRefreshToken();
+            await _unitOfWork.BeginTransactionAsync(cancellationToken);
+            var sessionId = await StoreRefreshTokenAsync(user.Id, refreshToken, refreshExpiresAt, securityVersion);
+            var accessToken = await GenerateJwtTokenAsync(user, securityVersion, sessionId);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.CommitTransactionAsync(cancellationToken);
+            return Result.Ok(new AuthenticationResponseVM { AccessToken = accessToken,
+                ExpiresInSeconds = int.Parse(_configuration["Jwt:AccessTokenExpirySeconds"] ?? "3600"),
+                RefreshToken = refreshToken, RefreshTokenExpiresAt = refreshExpiresAt, UserId = user.Id,
+                RequiresTwoFactor = await _userManager.GetTwoFactorEnabledAsync(user),
+                IsPasswordCreated = await _userManager.HasPasswordAsync(user), IsEmailConfirmed = await _userManager.IsEmailConfirmedAsync(user) });
+        }
+
         public async Task<Result<AuthenticationResponseVM>> LoginAsync(string userNameOrEmail, string password, bool rememberMe = false)
         {
             
@@ -68,6 +91,9 @@ namespace ahis.template.identity.Services
                 // Check for user existance
                 var user = await _userManager.FindByNameAsync(userNameOrEmail) ?? await _userManager.FindByEmailAsync(userNameOrEmail);
                 if (user == null)
+                    return Result.Fail<AuthenticationResponseVM>("Invalid credentials.");
+
+                if (user.MustResetPassword)
                     return Result.Fail<AuthenticationResponseVM>("Invalid credentials.");
 
                 if (!await _restrictions.IsAuthenticationAllowedAsync(user))
@@ -249,6 +275,8 @@ namespace ahis.template.identity.Services
                     return Result.Fail("Invalid refresh token.");
 
                 var user = await _userManager.FindByIdAsync(storedToken.UserId);
+                if (user?.MustResetPassword == true)
+                    return Result.Fail("Invalid refresh token.");
                 if (!await _tokenState.MatchesAsync(user, storedToken.SecurityVersion, cancellationToken))
                     return Result.Fail("Invalid refresh token.");
 
@@ -345,6 +373,7 @@ namespace ahis.template.identity.Services
                 var user = await _signInManager.GetTwoFactorAuthenticationUserAsync();
                 if (user is null || string.IsNullOrWhiteSpace(challengeUserId) ||
                     !string.Equals(challengeUserId, user.Id, StringComparison.Ordinal) ||
+                    user.MustResetPassword ||
                     !await _tokenState.MatchesAsync(user, challengeVersion))
                 {
                     await ClearTwoFactorChallengeAsync();
@@ -500,7 +529,7 @@ namespace ahis.template.identity.Services
             return Result.Ok();
         }
 
-        public async Task<Result> ResetPasswordAsync(string userId, string token, string newPassword)
+        public async Task<Result> ResetPasswordAsync(string userId, string token, string newPassword, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(newPassword))
             {
@@ -517,25 +546,32 @@ namespace ahis.template.identity.Services
 
             var decodedToken = WebUtility.UrlDecode(token);
 
-            var identityResult = await _userManager.ResetPasswordAsync(user, decodedToken, newPassword);
-
-            if (!identityResult.Succeeded)
+            try
             {
-                var errors = identityResult.Errors
-                    .Select(e =>
-                        new Error(e.Description)
-                        .WithMetadata("Field", "password"))
-                    .ToList();
+                await _unitOfWork.BeginTransactionAsync(cancellationToken);
+                var identityResult = await _userManager.ResetPasswordAsync(user, decodedToken, newPassword);
+                if (!identityResult.Succeeded)
+                {
+                    var errors = identityResult.Errors.Select(e => new Error(e.Description).WithMetadata("Field", "password")).ToList();
+                    return Result.Fail(errors);
+                }
 
-                return Result.Fail(errors);
+                user.MustResetPassword = false;
+                user.UpdatedAt = DateTime.UtcNow;
+                var update = await _userManager.UpdateAsync(user);
+                if (!update.Succeeded) return Result.Fail("Failed to complete password reset.");
+                var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
+                if (!invalidation.Succeeded) return Result.Fail("Failed to invalidate sessions.");
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+                await _unitOfWork.CommitTransactionAsync(cancellationToken);
+                return Result.Ok();
             }
-
-            // Optional but recommended: invalidate sessions
-            var invalidation = await _tokenState.InvalidateAsync(user);
-            if (!invalidation.Succeeded)
-                return Result.Fail("Failed to invalidate sessions.");
-
-            return Result.Ok();
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Password reset failed for user {UserId}", userId);
+                return Result.Fail("Failed to complete password reset.");
+            }
+            finally { await _unitOfWork.RollbackTransactionAsync(CancellationToken.None); }
         }
 
         public async Task<Result> StartAccountRecoveryAsync(string email, CancellationToken cancellationToken)
@@ -555,7 +591,7 @@ namespace ahis.template.identity.Services
                 return Result.Ok();
 
             var user = await _userManager.FindByEmailAsync(email.Trim());
-            if (!_tokenState.IsEligible(user) || user is null || !await _userManager.IsEmailConfirmedAsync(user))
+            if (!_tokenState.IsEligible(user) && user?.MustResetPassword != true || user is null || !await _userManager.IsEmailConfirmedAsync(user))
                 return Result.Ok();
 
             var publicClientBaseUrl = _configuration["Identity:PublicClientBaseUrl"];
@@ -651,6 +687,12 @@ namespace ahis.template.identity.Services
                         .Select(error => new Error(error.Description).WithMetadata("Field", "password"));
                     return Result.Fail(errors);
                 }
+
+                user.MustResetPassword = false;
+                user.UpdatedAt = DateTime.UtcNow;
+                var update = await _userManager.UpdateAsync(user);
+                if (!update.Succeeded)
+                    return Result.Fail("Unable to complete recovery.");
 
                 var invalidation = await _tokenState.InvalidateAsync(user, cancellationToken);
                 if (!invalidation.Succeeded)

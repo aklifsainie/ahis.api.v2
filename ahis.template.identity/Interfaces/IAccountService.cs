@@ -29,6 +29,10 @@ namespace ahis.template.identity.Interfaces
             string targetUserId,
             string? stepUpProof,
             CancellationToken cancellationToken);
+        Task<Result<AdminUserControlOutcome>> DisableAdminUserAsync(string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken);
+        Task<Result<AdminUserControlOutcome>> EnableAdminUserAsync(string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken);
+        Task<Result<AdminUserControlOutcome>> ResetAdminUserMfaAsync(string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken);
+        Task<Result<AdminUserControlOutcome>> RequireAdminUserPasswordResetAsync(string actorUserId, string targetUserId, string? stepUpProof, CancellationToken cancellationToken);
         Task<Result> RevokeSessionAsync(
             string userId,
             Guid sessionPublicId,
@@ -61,4 +65,6 @@ namespace ahis.template.identity.Interfaces
         AlreadyUnlocked,
         Unlocked
     }
+
+    public enum AdminUserControlOutcome { TargetNotFound, Changed, AlreadyInRequestedState }
 }

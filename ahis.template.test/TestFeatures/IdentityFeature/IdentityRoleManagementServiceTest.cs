@@ -137,6 +137,22 @@ public sealed class IdentityRoleManagementServiceTest
         invalidResult.Errors.Single().Metadata.Should().ContainKey("Validation");
     }
 
+    [Fact]
+    public async Task LockAcquisitionFailureFailsClosedBeforeChangingMembership()
+    {
+        await using var fixture = await RoleManagementFixture.CreateAsync();
+        var target = await fixture.AddUserAsync("lock-failure-target");
+        var existing = await fixture.AddRoleAsync("LockFailureExisting");
+        await fixture.Users.AddToRoleAsync(target, existing.Name!);
+        fixture.EffectiveLock.Setup(x => x.AcquireAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        var result = await fixture.Service.ReplaceUserRolesAsync("actor", "proof", target.Id, [], CancellationToken.None);
+
+        result.IsFailed.Should().BeTrue();
+        result.Errors.Single().Metadata.Should().ContainKey("OperationalFailure");
+        (await fixture.Users.GetRolesAsync(target)).Should().ContainSingle().Which.Should().Be(existing.Name);
+    }
+
     private sealed class RoleManagementFixture : IAsyncDisposable
     {
         private readonly string _connectionString;
@@ -144,16 +160,18 @@ public sealed class IdentityRoleManagementServiceTest
         public UserManager<ApplicationUser> Users { get; }
         public RoleManager<IdentityRole> Roles { get; }
         public Mock<IIdentityTokenStateService> Tokens { get; }
+        public Mock<IEffectiveSuperadminLock> EffectiveLock { get; } = new();
         public IdentityRoleManagementService Service { get; }
 
         private RoleManagementFixture(string connectionString, IdentityContext context, UserManager<ApplicationUser> users,
-            RoleManager<IdentityRole> roles, Mock<IIdentityTokenStateService> tokens, IdentityRoleManagementService service)
+            RoleManager<IdentityRole> roles, Mock<IIdentityTokenStateService> tokens, Mock<IEffectiveSuperadminLock> effectiveLock, IdentityRoleManagementService service)
         {
             _connectionString = connectionString;
             Context = context;
             Users = users;
             Roles = roles;
             Tokens = tokens;
+            EffectiveLock = effectiveLock;
             Service = service;
         }
 
@@ -176,14 +194,16 @@ public sealed class IdentityRoleManagementServiceTest
             tokens.Setup(x => x.IsEligible(It.IsAny<ApplicationUser>())).Returns(true);
             var restrictions = new Mock<IIdentityRestrictionService>();
             restrictions.Setup(x => x.IsAuthenticationAllowedAsync(It.IsAny<ApplicationUser>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-            var service = new IdentityRoleManagementService(context, roles, users, normalizer, proof.Object, tokens.Object, restrictions.Object);
+            var effectiveLock = new Mock<IEffectiveSuperadminLock>();
+            effectiveLock.Setup(x => x.AcquireAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            var service = new IdentityRoleManagementService(context, roles, users, normalizer, proof.Object, tokens.Object, restrictions.Object, effectiveLock.Object);
             var superadmin = new IdentityRole(IdentityRoleNames.Superadmin);
             (await roles.CreateAsync(superadmin)).Succeeded.Should().BeTrue();
             (await roles.CreateAsync(new IdentityRole(IdentityRoleNames.User))).Succeeded.Should().BeTrue();
             var actor = new ApplicationUser { Id = "actor", UserName = "actor", Email = "actor@example.test", IsActive = true, EmailConfirmed = true };
             (await users.CreateAsync(actor)).Succeeded.Should().BeTrue();
             (await users.AddToRoleAsync(actor, IdentityRoleNames.Superadmin)).Succeeded.Should().BeTrue();
-            return new RoleManagementFixture(connectionString, context, users, roles, tokens, service);
+            return new RoleManagementFixture(connectionString, context, users, roles, tokens, effectiveLock, service);
         }
 
         public async Task<ApplicationUser> AddUserAsync(string userName)

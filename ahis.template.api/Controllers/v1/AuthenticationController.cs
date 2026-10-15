@@ -7,6 +7,7 @@ using ahis.template.domain.Models.ViewModels.AuthenticationVM;
 using ahis.template.identity.Interfaces;
 using FluentResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.RateLimiting;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
@@ -22,6 +23,46 @@ namespace ahis.template.api.Controllers.v1
         public AuthenticationController(IMediator mediator)
         {
             _mediator = mediator;
+        }
+
+        [HttpPost("passkeys/options")]
+        [AllowAnonymous]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> PasskeyOptions(CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(new PasskeyAuthenticationOptionsCommand(), cancellationToken);
+            return result.IsSuccess ? Ok(result.Value) : ToValidationProblem(result);
+        }
+
+        [HttpPost("passkeys/complete")]
+        [AllowAnonymous]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> CompletePasskey([FromBody] CompletePasskeyAuthenticationCommand command, CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(command, cancellationToken);
+            if (result.IsFailed) return ToValidationProblem(result);
+            RefreshCookie.Append(Response, result.Value.RefreshToken!, result.Value.RefreshTokenExpiresAt);
+            return Ok(new ahis.template.domain.Models.ViewModels.AuthenticationVM.LoginResponseVM
+            {
+                AccessToken = result.Value.AccessToken,
+                ExpiresInSeconds = result.Value.ExpiresInSeconds,
+                RequiresTwoFactor = result.Value.RequiresTwoFactor,
+                IsEmailConfirmed = result.Value.IsEmailConfirmed
+            });
+        }
+
+        private IActionResult ToValidationProblem(Result result)
+        {
+            foreach (var error in result.Errors) ModelState.AddModelError("general", error.Message);
+            return ValidationProblem(ModelState);
+        }
+
+        private IActionResult ToValidationProblem<T>(Result<T> result)
+        {
+            foreach (var error in result.Errors) ModelState.AddModelError("general", error.Message);
+            return ValidationProblem(ModelState);
         }
 
 

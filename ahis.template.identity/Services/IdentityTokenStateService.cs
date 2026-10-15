@@ -27,7 +27,7 @@ public sealed class IdentityTokenStateService : IIdentityTokenStateService
             : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(user.SecurityStamp)));
 
     public bool IsEligible(ApplicationUser? user) =>
-        user is not null && user.IsActive && !user.IsDeleted && !user.IsLockedOut;
+        user is not null && user.IsActive && !user.IsDeleted && !user.IsLockedOut && !user.MustResetPassword;
 
     public bool Matches(ApplicationUser? user, string? presentedVersion)
     {

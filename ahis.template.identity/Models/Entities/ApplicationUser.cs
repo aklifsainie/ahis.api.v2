@@ -23,6 +23,9 @@ namespace ahis.template.identity.Models.Entities
         /// </summary>
         public bool IsAccountConfigured { get; set; } = false;
 
+        /// <summary>Requires a successful password reset before password based access is allowed.</summary>
+        public bool MustResetPassword { get; set; } = false;
+
         /// <summary>
         /// The date of the user verified their email address.
         /// </summary>

@@ -129,6 +129,94 @@ public sealed class AdminIdentityController : BaseApiController
         return NoContent();
     }
 
+    /// <summary>Places an administrative security hold on an eligible account.</summary>
+    [HttpPost("{userId}/disable")]
+    [Authorize(Policy = "IdentityAdminUserAccessPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public Task<IActionResult> Disable(string userId, [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof) =>
+        ChangeAdminUserAccess(userId, stepUpProof, disable: true);
+
+    /// <summary>Closes an active administrative security hold without changing other account state.</summary>
+    [HttpPost("{userId}/enable")]
+    [Authorize(Policy = "IdentityAdminUserAccessPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public Task<IActionResult> Enable(string userId, [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof) =>
+        ChangeAdminUserAccess(userId, stepUpProof, disable: false);
+
+    /// <summary>Resets an eligible user's authenticator and recovery codes.</summary>
+    [HttpPost("{userId}/reset-mfa")]
+    [Authorize(Policy = "IdentityAdminUserAccessPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public Task<IActionResult> ResetMfa(string userId, [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof) =>
+        ChangeAdminCredential(userId, stepUpProof, resetMfa: true);
+
+    /// <summary>Requires an eligible user to complete the password reset flow before signing in.</summary>
+    [HttpPost("{userId}/require-password-reset")]
+    [Authorize(Policy = "IdentityAdminUserAccessPolicy")]
+    [EnableRateLimiting("AuthenticatedSecurityPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public Task<IActionResult> RequirePasswordReset(string userId, [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof) =>
+        ChangeAdminCredential(userId, stepUpProof, resetMfa: false);
+
+    private async Task<IActionResult> ChangeAdminCredential(string userId, string? proof, bool resetMfa)
+    {
+        var result = resetMfa
+            ? await _mediator.Send(new ResetAdminUserMfaCommand { UserId = userId, StepUpProof = proof }, HttpContext.RequestAborted)
+            : await _mediator.Send(new RequireAdminUserPasswordResetCommand { UserId = userId, StepUpProof = proof }, HttpContext.RequestAborted);
+        Response.Headers.CacheControl = "no-store";
+        if (result.IsFailed)
+        {
+            if (result.Errors.Any(error => error.Metadata.ContainsKey("OperationalFailure"))) return Problem(statusCode: StatusCodes.Status500InternalServerError);
+            if (result.Errors.Any(error => error is ahis.template.application.Shared.Errors.EntityNotFoundError))
+                return Problem(title: "Resource not found", detail: "Resource not found.", statusCode: StatusCodes.Status404NotFound);
+            return ValidationProblem();
+        }
+        return NoContent();
+    }
+
+    private async Task<IActionResult> ChangeAdminUserAccess(string userId, string? proof, bool disable)
+    {
+        var result = disable
+            ? await _mediator.Send(new DisableAdminUserCommand { UserId = userId, StepUpProof = proof }, HttpContext.RequestAborted)
+            : await _mediator.Send(new EnableAdminUserCommand { UserId = userId, StepUpProof = proof }, HttpContext.RequestAborted);
+        Response.Headers.CacheControl = "no-store";
+        if (result.IsFailed)
+        {
+            if (result.Errors.Any(error => error.Metadata.ContainsKey("OperationalFailure"))) return Problem(statusCode: StatusCodes.Status500InternalServerError);
+            if (result.Errors.Any(error => error is ahis.template.application.Shared.Errors.EntityNotFoundError))
+                return Problem(title: "Resource not found", detail: "Resource not found.", statusCode: StatusCodes.Status404NotFound);
+            return ValidationProblem();
+        }
+        return NoContent();
+    }
+
     /// <summary>Gets direct Identity-role assignments for a user.</summary>
     [HttpGet("{userId}/roles")]
     [Authorize(Policy = "IdentityRoleReadPolicy")]

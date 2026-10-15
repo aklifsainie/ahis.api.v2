@@ -16,3 +16,5 @@ dotnet test .\AhisApiTemplate.sln --no-build --no-restore
 The Country example is `FullyQualifiedName~ahis.template.test.TestFeatures.CountryFeature.GetAllCountryQueryTest`; it is not a default check for unrelated changes. If no relevant focused test exists, report that limitation and run the affected project/solution checks instead. Restore first only when required. Build/test create local outputs and may use the network. Never use database-update commands as verification.
 
 For the security-policy and concurrency suite, use `--filter "FullyQualifiedName~IdentityPolicy|FullyQualifiedName~IdentityConcurrency"`. The 2026-09-30 run passed 32 focused tests and 94 solution tests on SQL Server 2019 LocalDB `15.0.4382.1`.
+
+`IdentityConcurrencyTest` also contains effective-Superadmin races for two disables, disable versus role replacement, and self-deactivation versus role replacement. These new cases require disposable SQL Server LocalDB fixtures; compilation alone does not verify their transaction interleavings.

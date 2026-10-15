@@ -5,6 +5,7 @@ using ahis.template.api.Security;
 using ahis.template.application.Shared;
 using ahis.template.application.Shared.Mediator;
 using ahis.template.domain.Models.ViewModels.AccountVM;
+using ahis.template.identity.Models.DTOs;
 using FluentResults;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity.Data;
@@ -686,6 +687,46 @@ namespace ahis.template.api.Controllers.v1
         private void ClearRefreshCookie()
         {
             RefreshCookie.Clear(Response);
+        }
+
+        [Authorize]
+        [HttpPost("passkeys/registration-options")]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> PasskeyRegistrationOptions(CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(new PasskeyRegistrationOptionsCommand(), cancellationToken);
+            return result.IsSuccess ? Ok(result.Value) : ToValidationProblem(result);
+        }
+
+        [Authorize]
+        [HttpPost("passkeys/registration-complete")]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> CompletePasskeyRegistration([FromBody] CompletePasskeyRegistrationCommand command, CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(command, cancellationToken);
+            return result.IsSuccess ? Ok(result.Value) : ToValidationProblem(result);
+        }
+
+        [Authorize]
+        [HttpGet("passkeys")]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> ListPasskeys(CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(new ListPasskeysQuery(), cancellationToken);
+            return result.IsSuccess ? Ok(result.Value) : ToValidationProblem(result);
+        }
+
+        [Authorize]
+        [HttpDelete("passkeys/{credentialId:guid}")]
+        [EnableRateLimiting("PasskeyPolicy")]
+        public async Task<IActionResult> DeletePasskey(Guid credentialId, [FromHeader(Name = "X-Step-Up-Proof")] string? stepUpProof, [FromBody] PasskeyRemovalEvidence body, CancellationToken cancellationToken)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await _mediator.Send(new DeletePasskeyCommand { CredentialId = credentialId, StepUpProof = stepUpProof, Password = body.Password, RecoveryCode = body.RecoveryCode }, cancellationToken);
+            return result.IsSuccess ? NoContent() : ToValidationProblem(result);
         }
 
 

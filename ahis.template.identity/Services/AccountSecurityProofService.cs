@@ -26,6 +26,8 @@ public sealed class AccountSecurityProofService : IAccountSecurityProofService
 
     public Task<Result<string>> CreateAsync(ApplicationUser user, CancellationToken cancellationToken = default)
     {
+        if (user.MustResetPassword || !_tokenState.IsEligible(user))
+            return Task.FromResult(Result.Fail<string>("Unable to create security proof."));
         var securityVersion = _tokenState.GetSecurityVersion(user);
         var signingKey = _configuration["Jwt:SigningKey"];
         if (securityVersion is null || string.IsNullOrWhiteSpace(signingKey))

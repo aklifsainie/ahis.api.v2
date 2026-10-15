@@ -10,7 +10,22 @@ namespace ahis.template.identity.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("IF EXISTS (SELECT 1 FROM [IdentityRoles]) BEGIN THROW 51000, 'IdentityRoles contains rows; reconcile them before consolidating the role store.', 1; END;");
+            migrationBuilder.Sql("""
+                IF OBJECT_ID(N'[dbo].[IdentityRoles]', N'U') IS NULL
+                BEGIN
+                    CREATE TABLE [dbo].[IdentityRoles]
+                    (
+                        [Id] nvarchar(450) NOT NULL,
+                        [Name] nvarchar(max) NULL,
+                        [NormalizedName] nvarchar(max) NULL,
+                        [ConcurrencyStamp] nvarchar(max) NULL,
+                        CONSTRAINT [PK_IdentityRoles] PRIMARY KEY ([Id])
+                    );
+                END;
+
+                IF EXISTS (SELECT 1 FROM [dbo].[IdentityRoles])
+                    THROW 51000, 'IdentityRoles contains rows; reconcile them before consolidating the role store.', 1;
+                """);
 
             migrationBuilder.DropForeignKey(
                 name: "FK_IdentityRoleClaims_AspNetRoles_RoleId",

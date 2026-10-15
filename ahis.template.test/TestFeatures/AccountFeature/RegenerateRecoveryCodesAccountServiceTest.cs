@@ -75,7 +75,8 @@ public class RegenerateRecoveryCodesAccountServiceTest
             securityProof.Object,
             Mock.Of<IIdentityRestrictionService>(),
             new IdentityUnitOfWork(context),
-            context);
+            context,
+            Mock.Of<IEffectiveSuperadminLock>());
     }
 
     private static ApplicationUser User(bool twoFactorEnabled) => new()

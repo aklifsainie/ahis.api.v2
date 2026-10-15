@@ -19,6 +19,16 @@ namespace ahis.template.test.TestFeatures.AccountFeature;
 public class AccountServiceTest
 {
     [Fact]
+    public void IdentityTokenStateRejectsUsersRequiringPasswordReset()
+    {
+        var userManager = CreateUserManager();
+        var context = new IdentityContext(new DbContextOptionsBuilder<IdentityContext>().Options);
+        var service = new IdentityTokenStateService(userManager.Object, context, Mock.Of<IIdentityRestrictionService>());
+
+        service.IsEligible(new ApplicationUser { Id = "user-1", MustResetPassword = true }).Should().BeFalse();
+        service.IsEligible(new ApplicationUser { Id = "user-1", MustResetPassword = false }).Should().BeTrue();
+    }
+    [Fact]
     public async Task GenerateAuthenticatorSetupAsync_RejectsResetWhenTwoFactorIsEnabled()
     {
         var user = new ApplicationUser
@@ -40,7 +50,8 @@ public class AccountServiceTest
             Mock.Of<IAccountSecurityProofService>(),
             Mock.Of<IIdentityRestrictionService>(),
             new IdentityUnitOfWork(context),
-            context);
+            context,
+            Mock.Of<IEffectiveSuperadminLock>());
 
         var result = await service.GenerateAuthenticatorSetupAsync(user.Id);
 
